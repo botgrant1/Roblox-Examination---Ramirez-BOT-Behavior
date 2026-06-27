@@ -1,5 +1,5 @@
 --[[
-    LURKER AUTOPILOT - VERSION 21 (SHORT-TERM MEMORY & PATH FORKING SYSTEM)
+    LURKER AUTOPILOT - VERSION 22 (FAST REACTION & INSTANT FORKING)
 --]]
 
 local Players = game:GetService("Players")
@@ -180,7 +180,7 @@ local function calculateSmartLurkerPath()
 		selectedPoint = cleanChoices[math.random(1, #cleanChoices)]
 	elseif #validOptions > 0 then
 		table.sort(validOptions, function(a, b) return a.dist > b.dist end)
-		selectedPoint = validOptions[1].point
+		selectedPoint = validOptions.point
 	else
 		local randomAngle = math.rad(math.random(0, 360))
 		selectedPoint = rootPart.Position + Vector3.new(math.cos(randomAngle) * 20, 0, math.sin(randomAngle) * 20)
@@ -253,8 +253,9 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			destinationPos = targetPosition
 			moveDirection = (flatTargetPos - flatCharacterPos).Unit
 		else
+			-- MODIFICACIÓN CRÍTICA: Pausa ultracorta de 0.3 a 0.7 segundos para una reacción casi instantánea
 			isResting = true
-			restTimer = math.random(12, 22) / 10 
+			restTimer = math.random(3, 7) / 10 
 			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
 			return
 		end
@@ -272,10 +273,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		local obstacleRay = Workspace:Raycast(rootPart.Position, moveDirection * 3.5, rayParams)
 		if obstacleRay then humanoid.Jump = true end
 	end
-end)
-
-humanoid.Died:Connect(function()
-	screenGui:Destroy()
 end)
 
 humanoid.Died:Connect(function()
