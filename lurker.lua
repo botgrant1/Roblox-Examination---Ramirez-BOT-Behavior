@@ -1,5 +1,5 @@
 --[[
-    LURKER AUTOPILOT - VERSION 15 (ANIMATION SYNC & REALSPEED CALIBRATION)
+    LURKER AUTOPILOT - REAL ENGINE CALIBRATION & LERP SMOOTHING
 --]]
 
 local Players = game:GetService("Players")
@@ -61,6 +61,7 @@ buttonCorner.Parent = toggleButton
 local targetPosition = rootPart.Position
 local isResting = false
 local restTimer = 0
+local currentVisualHeading = rootPart.CFrame.LookVector
 
 toggleButton.MouseButton1Click:Connect(function()
 	getgenv().LurkerAI_Enabled = not getgenv().LurkerAI_Enabled
@@ -69,6 +70,7 @@ toggleButton.MouseButton1Click:Connect(function()
 		toggleButton.Text = "ESTADO: ACTIVO"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
 		targetPosition = rootPart.Position
+		currentVisualHeading = rootPart.CFrame.LookVector
 		isResting = false
 	else
 		toggleButton.Text = "ESTADO: DESACTIVADO"
@@ -77,41 +79,57 @@ toggleButton.MouseButton1Click:Connect(function()
 end)
 
 -- =========================================================================
--- DETECTOR DE PASILLOS REALISTAS
+-- ESCÁNER DE PASILLOS LARGOS Y DETECCIÓN DE OBJETOS REFORZADA
 -- =========================================================================
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 local function calculateNewPatrolPoint()
 	rayParams.FilterDescendantsInstances = {character}
-	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
 	
 	local bestPoint = rootPart.Position
 	local maxFreeSpace = 0
 	
-	for i = 1, 12 do
-		local angle = math.rad(i * (360 / 12))
-		local distance = math.random(45, 75) -- Caminatas largas de exploración
+	-- Escaneamos 16 direcciones para encontrar las rutas más largas del Sector 1
+	for i = 1, 16 do
+		local angle = math.rad(i * (360 / 16))
+		local distance = math.random(55, 90) -- Trayectos notablemente más largos
 		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
 		
-		local rayResult = Workspace:Raycast(origin, direction * distance, rayParams)
-		local freeDistance = rayResult and (rayResult.Position - rootPart.Position).Magnitude or distance
+		-- SISTEMA MULTI-RAYO: Lanzamos un rayo bajo (objetos/cajas) y uno alto (paredes/puertas)
+		local originLow = rootPart.Position + Vector3.new(0, -0.6, 0)
+		local originHigh = rootPart.Position + Vector3.new(0, 1, 0)
 		
-		if freeDistance > maxFreeSpace and freeDistance > 15 then
-			maxFreeSpace = freeDistance
-			bestPoint = rootPart.Position + direction * (freeDistance - 6)
+		local rayLow = Workspace:Raycast(originLow, direction * distance, rayParams)
+		local rayHigh = Workspace:Raycast(originHigh, direction * distance, rayParams)
+		
+		local distLow = rayLow and (rayLow.Position - rootPart.Position).Magnitude or distance
+		local distHigh = rayHigh and (rayHigh.Position - rootPart.Position).Magnitude or distance
+		
+		-- Tomamos la distancia del objeto más cercano que obstruya el paso
+		local effectiveDistance = math.min(distLow, distHigh)
+		
+		-- Si detectamos un objeto o caja decorativa muy cerca del frente, preparamos salto reactivo
+		if effectiveDistance < 4.5 then
+			humanoid.Jump = true
+		end
+		
+		-- Buscador estricto de pasillos limpios y amplios del Sector 1
+		if effectiveDistance > maxFreeSpace and effectiveDistance > 18 then
+			maxFreeSpace = effectiveDistance
+			-- Guardamos la coordenada final con margen de seguridad para no rozar esquinas
+			bestPoint = rootPart.Position + direction * (effectiveDistance - 6)
 		end
 	end
 	return bestPoint
 end
 
 -- =========================================================================
--- MOTOR DE DESLIZAMIENTO CON SINCRONIZACIÓN DE ANIMACIONES
+-- MOTOR DE DESLIZAMIENTO CON INTERPOLACIÓN (LERP) Y ANIMACIÓN
 -- =========================================================================
 RunService.Heartbeat:Connect(function(deltaTime)
 	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
 	
-	-- Si está quieto acechando, mantenemos la animación Idle por defecto
 	if isResting then
 		restTimer = restTimer - deltaTime
 		if restTimer <= 0 then
@@ -125,32 +143,28 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	local flatTargetPos = Vector3.new(targetPosition.X, 0, targetPosition.Z)
 	local distance = (flatCharacterPos - flatTargetPos).Magnitude
 	
-	if distance > 3 then
-		-- CALIBRACIÓN: 13.5 studs/sec es la velocidad exacta de caminata acechante del Lurker
-		local speed = 13.5 
+	if distance > 3.5 then
+		-- CALIBRACIÓN EXACTA: 9.8 studs/sec es la velocidad real de caminata pasiva del Lurker
+		local speed = 9.8 
 		local moveDirection = (flatTargetPos - flatCharacterPos).Unit
 		
-		-- Desplazamiento matemático por CFrame
+		-- Desplazamiento matemático continuo
 		local nextPosition = rootPart.Position + moveDirection * (speed * deltaTime)
-		rootPart.CFrame = CFrame.lookAt(nextPosition, Vector3.new(targetPosition.X, rootPart.Position.Y, targetPosition.Z))
 		
-		-- TRUCO DE ANIMACIÓN: Forzamos al script 'Animate' del juego a detectar movimiento real.
-		-- Le inyectamos una velocidad virtual para que empiece a mover las piernas de forma natural.
+		-- TRUCO DE FLUIDEZ DE IA (LERP): Suavizamos el giro del cuerpo.
+		-- El personaje alineará su torso gradualmente (0.15 por cuadro) simulando un movimiento orgánico.
+		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 12 * deltaTime).Unit
+		rootPart.CFrame = CFrame.lookAt(nextPosition, rootPart.Position + currentVisualHeading)
+		
+		-- Sincronización forzada de la animación de caminata lenta
 		pcall(function()
 			humanoid.RootPart.AssemblyLinearVelocity = moveDirection * speed
 		end)
-		
-		-- Salto automático si topamos con obstáculos bajos
-		local obstacleRay = Workspace:Raycast(rootPart.Position, moveDirection * 3.5, rayParams)
-		if obstacleRay then
-			humanoid.Jump = true
-		end
 	else
-		-- Llegamos al final del pasillo: entramos en pausa estática
+		-- Pausa estática característica al terminar una caminata larga
 		isResting = true
-		restTimer = math.random(15, 25) / 10 -- Pausa de 1.5 a 2.5 segundos
+		restTimer = math.random(18, 30) / 10 -- Entre 1.8 y 3.0 segundos acechando completamente quieto
 		
-		-- Frenamos la velocidad virtual para que regrese de inmediato a la animación Idle
 		pcall(function()
 			humanoid.RootPart.AssemblyLinearVelocity = Vector3.new()
 		end)
@@ -160,3 +174,4 @@ end)
 humanoid.Died:Connect(function()
 	screenGui:Destroy()
 end)
+
