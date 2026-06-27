@@ -1,76 +1,65 @@
 --[[
-    LURKER AUTOPILOT - VERSION 7 (PHYSICAL KEYBOARD SIMULATION)
+    LURKER AUTOPILOT - VERSION 8 (NATIVE CONTROL & MULTI-RAY DETECTION)
 --]]
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
-local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
-print("[Lurker Exploit] Versión 7 Cargada: Simulación física de teclado sin tirones.")
+print("[Lurker Exploit] Versión 8 Cargada: Movimiento nativo fluido a 60 FPS.")
 
--- Configuraciones de IA y sensores
-local maxVisionDistance = 120
+-- Configuraciones de IA y rangos
+local maxVisionDistance = 110
 local currentTarget = nil
-local activeKeys = {W = false, A = false, S = false, D = false}
+local patrolAngle = math.random(0, 360)
 
--- Parámetros de Raycast para evadir muros
+-- Parámetros de Raycast
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
--- 1. CONTROLADOR DE PULSACIÓN FÍSICA (Emula tu teclado real)
-local function pressKey(key, hold)
-	if activeKeys[key] == hold then return end -- Si ya está en ese estado, no hace nada
-	activeKeys[key] = hold
-	
-	if hold then
-		VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-	else
-		VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-	end
-end
-
--- Limpia todas las teclas presionadas para evitar que camine solo eternamente al apagarse
-local function clearKeyboard()
-	for key, isPressed in pairs(activeKeys) do
-		if isPressed then pressKey(key, false) end
-	end
-end
-
--- 2. DETECTOR DE OBSTÁCULOS POR RAYCAST (Bigotes de gato mecánicos)
-local function getNavigationAdjustment()
+-- 1. ESCÁNER DE OBSTÁCULOS MEJORADO (Evita choques con paredes y objetos)
+local function getAvoidanceDirection(baseDirection)
 	rayParams.FilterDescendantsInstances = {character}
 	
-	local lookDir = rootPart.CFrame.LookVector
-	local rightDir = rootPart.CFrame.RightVector
+	local origin = rootPart.Position + Vector3.new(0, -1, 0) -- Escaneo a la altura de las piernas/obstáculos bajos
+	local forwardVector = baseDirection.Unit
+	local rightVector = Vector3.new(-forwardVector.Z, 0, forwardVector.X) -- Vector derecho ortogonal
 	
-	-- Lanza un rayo frontal para saber si hay una pared o puerta encima
-	local frontRay = Workspace:Raycast(rootPart.Position, lookDir * 7, rayParams)
+	-- Matriz de 3 rayos frontales (Centro, Izquierda, Derecha) para detección precisa
+	local rayCenter = Workspace:Raycast(origin, forwardVector * 9, rayParams)
+	local rayLeft = Workspace:Raycast(origin, (forwardVector - rightVector * 0.4).Unit * 8, rayParams)
+	local rayRight = Workspace:Raycast(origin, (forwardVector + rightVector * 0.4).Unit * 8, rayParams)
 	
-	if frontRay and not frontRay.Instance:IsDescendantOf(character) then
-		-- Si nos pegamos demasiado, forzamos un salto automático para saltar barandas u objetos bajos
-		if (frontRay.Position - rootPart.Position).Magnitude < 4.5 then
-			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
-			task.wait(0.05)
-			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+	-- Si detecta algo al frente, desvía la trayectoria suavemente
+	if rayCenter or rayLeft or rayRight then
+		-- Salto automático si nos trabamos muy cerca de un objeto bajo (ej: barandas)
+		local obstacle = rayCenter or rayLeft or rayRight
+		if (obstacle.Position - rootPart.Position).Magnitude < 4.5 then
+			humanoid.Jump = true
 		end
 		
-		-- Evaluamos cuál lateral del pasillo está libre
-		local leftRay = Workspace:Raycast(rootPart.Position, -rightDir * 10, rayParams)
-		local rightRay = Workspace:Raycast(rootPart.Position, rightDir * 10, rayParams)
+		-- Analizar cuál lado está más libre para girar de forma limpia
+		local checkLeft = Workspace:Raycast(origin, -rightVector * 12, rayParams)
+		local checkRight = Workspace:Raycast(origin, rightVector * 12, rayParams)
 		
-		if not leftRay then return "A" end -- Girar a la izquierda
-		if not rightRay then return "D" end -- Girar a la derecha
-		return "S" -- Retroceder si es un callejón sin salida
+		if not checkLeft then
+			return (-rightVector + forwardVector * 0.3).Unit -- Desvío fluido a la izquierda
+		elseif not checkRight then
+			return (rightVector + forwardVector * 0.3).Unit -- Desvío fluido a la derecha
+		else
+			return -forwardVector -- Dar la vuelta si es un callejón sin salida
+		end
 	end
-	return "W" -- Avanzar libremente si no hay nada en frente
+	
+	return baseDirection -- Mantener rumbo si el camino está limpio
 end
 
--- 3. FILTRO DE LÍNEA DE VISIÓN HUMANA
+-- 2. FILTRO DE LÍNEA DE VISIÓN REALISTA
 local function hasLineOfSight(enemyRoot)
 	rayParams.FilterDescendantsInstances = {character}
 	
@@ -79,7 +68,7 @@ local function hasLineOfSight(enemyRoot)
 	
 	if dotProduct < 0.65 then return false end -- Cono de visión de 90 grados frontal
 	
-	local origin = rootPart.Position + Vector3.new(0, 2, 0)
+	local origin = rootPart.Position + Vector3.new(0, 2, 0) -- Altura de los ojos
 	local direction = (enemyRoot.Position - origin)
 	local rayResult = Workspace:Raycast(origin, direction, rayParams)
 	
@@ -89,7 +78,7 @@ local function hasLineOfSight(enemyRoot)
 	return false
 end
 
--- 4. ESCÁNER DE ENTIDADES (Excluye jugadores reales)
+-- 3. ESCÁNER DE ENTIDADES (Excluye jugadores reales)
 local function getVisibleEntity()
 	local target = nil
 	local closestDistance = maxVisionDistance
@@ -114,76 +103,68 @@ local function getVisibleEntity()
 	return target
 end
 
--- 5. BUCLE PRINCIPAL DE NAVEGACIÓN MECÁNICA (Consumo óptimo de recursos)
+-- 4. BUCLE DE CONTROL INTEGRADO (Sincronizado a los FPS del juego para eliminar tirones)
+local inputDirection = Vector3.new()
+
+RunService.RenderStepped:Connect(function()
+	if not humanoid or humanoid.Health <= 0 then return end
+	
+	-- Inyectamos de forma nativa nuestra dirección de caminata en el script de control predeterminado de Roblox
+	humanoid:Move(inputDirection, false)
+end)
+
+-- Bucle de decisiones de IA (Cada 0.05 segundos para estabilidad total)
 task.spawn(function()
-	while task.wait(0.08) do -- Se ejecuta unas 12 veces por segundo (Fluidez perfecta)
-		if not humanoid or humanoid.Health <= 0 then 
-			clearKeyboard()
-			break 
-		end
+	while task.wait(0.05) do
+		if not humanoid or humanoid.Health <= 0 then break end
 		
 		local visibleEntity = getVisibleEntity()
 		if visibleEntity then currentTarget = visibleEntity end
 		
-		-- COMPORTAMIENTO 1: COMBATE CONTRA ENTIDAD VISTA
+		-- COMPORTAMIENTO 1: CAZAR ENTIDAD DETECTADA
 		if currentTarget and currentTarget.Parent and currentTarget.Parent:FindFirstChild("Humanoid") and currentTarget.Parent.Humanoid.Health > 0 then
 			local distance = (rootPart.Position - currentTarget.Position).Magnitude
 			
 			if distance > 130 then
 				currentTarget = nil
-				clearKeyboard()
-			elseif distance <= 7 then
-				-- Rango letal: Nos detenemos y atacamos activando el arma en mano
-				clearKeyboard()
+				inputDirection = Vector3.new()
+			elseif distance <= 6.5 then
+				-- Rango letal: Frenar y activar el arma automáticamente
+				inputDirection = Vector3.new()
 				local tool = character:FindFirstChildOfClass("Tool")
 				if tool then tool:Activate() end
 			else
-				-- Persecución mecánica guiando el cuerpo hacia el objetivo
-				humanoid.WalkSpeed = 24
-				local directionToEnemy = (currentTarget.Position - rootPart.Position).Unit
-				
-				-- Rotamos el torso suavemente hacia la dirección de la entidad para alinear la simulación del teclado
+				-- Avanzar de forma fluida hacia el objetivo alineando el torso hacia él
+				humanoid.WalkSpeed = 23
+				local targetDir = (currentTarget.Position - rootPart.Position).Unit
 				rootPart.CFrame = CFrame.new(rootPart.Position, Vector3.new(currentTarget.Position.X, rootPart.Position.Y, currentTarget.Position.Z))
 				
-				-- Presionamos avanzar físicamente
-				pressKey("W", true)
-				pressKey("A", false)
-				pressKey("D", false)
-				pressKey("S", false)
+				-- Aplicar desvío si hay una pared en medio del trayecto
+				inputDirection = getAvoidanceDirection(targetDir)
 			end
 			
-		-- COMPORTAMIENTO 2: DEAMBULAR INTELIGENTE (Patrulla Autónoma)
+		-- COMPORTAMIENTO 2: DEAMBULAR INTELIGENTE (Patrulla aleatoria por pasillos)
 		else
 			currentTarget = nil
 			humanoid.WalkSpeed = 15
 			
-			-- Analizamos los sensores para saber qué tecla de dirección física presionar
-			local bestAction = getNavigationAdjustment()
-			
-			if bestAction == "W" then
-				pressKey("W", true)
-				pressKey("A", false)
-				pressKey("D", false)
-				pressKey("S", false)
-			elseif bestAction == "A" then
-				pressKey("W", false)
-				pressKey("A", true)
-				pressKey("D", false)
-				pressKey("S", false)
-				task.wait(0.15) -- Tiempo mínimo de giro físico para evadir la esquina
-			elseif bestAction == "D" then
-				pressKey("W", false)
-				pressKey("A", false)
-				pressKey("D", true)
-				pressKey("S", false)
-				task.wait(0.15)
-			elseif bestAction == "S" then
-				pressKey("W", false)
-				pressKey("A", false)
-				pressKey("D", false)
-				pressKey("S", true)
-				task.wait(0.2)
+			-- Cambia el ángulo de patrulla sutilmente con el tiempo o si se topa con un muro
+			if math.random(1, 100) <= 4 then
+				patrolAngle = patrolAngle + math.random(-45, 45)
 			end
+			
+			local rad = math.rad(patrolAngle)
+			local desiredDirection = Vector3.new(math.cos(rad), 0, math.sin(rad)).Unit
+			
+			-- Analizar entorno con los rayos invisibles y corregir el rumbo antes de chocar
+			local finalDirection = getAvoidanceDirection(desiredDirection)
+			
+			-- Si los rayos forzaron un desvío, actualizamos nuestro ángulo interno de patrulla
+			if finalDirection ~= desiredDirection then
+				patrolAngle = math.atan2(finalDirection.Z, finalDirection.X) * (180 / math.pi)
+			end
+			
+			inputDirection = finalDirection
 		end
 	end
 end)
