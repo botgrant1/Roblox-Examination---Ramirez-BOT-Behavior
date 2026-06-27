@@ -1,5 +1,5 @@
 --[[
-    LURKER AUTOPILOT - REAL ENGINE CALIBRATION & LERP SMOOTHING
+    LURKER AUTOPILOT - VERSION 16 (SECTOR-1 CLOSE QUARTERS CALIBRATION)
 --]]
 
 local Players = game:GetService("Players")
@@ -57,13 +57,14 @@ local buttonCorner = Instance.new("UICorner")
 buttonCorner.CornerRadius = UDim.new(0, 6)
 buttonCorner.Parent = toggleButton
 
--- Variables de control de patrulla calibradas
+-- Variables de control adaptadas a pasillos cerrados
 local targetPosition = rootPart.Position
 local isResting = false
 local restTimer = 0
 local currentVisualHeading = rootPart.CFrame.LookVector
 
 toggleButton.MouseButton1Click:Connect(function()
+	getgenv().LurkerAI_Enabled = not getgenv().LurzenAI_Enabled
 	getgenv().LurkerAI_Enabled = not getgenv().LurkerAI_Enabled
 	
 	if getgenv().LurkerAI_Enabled then
@@ -79,62 +80,63 @@ toggleButton.MouseButton1Click:Connect(function()
 end)
 
 -- =========================================================================
--- ESCÁNER DE PASILLOS LARGOS Y DETECCIÓN DE OBJETOS REFORZADA
+-- ESCÁNER DE PASILLOS CERRADOS Y ÁNGULOS RECTOS (SECTOR-1)
 -- =========================================================================
 local rayParams = RaycastParams.new()
 rayParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local function calculateNewPatrolPoint()
+local function calculateSector1Point()
 	rayParams.FilterDescendantsInstances = {character}
 	
 	local bestPoint = rootPart.Position
 	local maxFreeSpace = 0
 	
-	-- Escaneamos 16 direcciones para encontrar las rutas más largas del Sector 1
-	for i = 1, 16 do
-		local angle = math.rad(i * (360 / 16))
-		local distance = math.random(55, 90) -- Trayectos notablemente más largos
+	-- Escaneamos 12 direcciones a distancias cortas para adaptarnos a las esquinas del Sector-1
+	for i = 1, 12 do
+		local angle = math.rad(i * (360 / 12))
+		-- Buscamos rutas de 20 a 35 unidades (el tamaño promedio de los pasillos cerrados)
+		local distance = math.random(20, 35) 
 		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
 		
-		-- SISTEMA MULTI-RAYO: Lanzamos un rayo bajo (objetos/cajas) y uno alto (paredes/puertas)
-		local originLow = rootPart.Position + Vector3.new(0, -0.6, 0)
-		local originHigh = rootPart.Position + Vector3.new(0, 1, 0)
+		-- Doble sensor de barrido bajo y alto para registrar decorados y muros
+		local originLow = rootPart.Position + Vector3.new(0, -0.7, 0)
+		local originHigh = rootPart.Position + Vector3.new(0, 0.8, 0)
 		
 		local rayLow = Workspace:Raycast(originLow, direction * distance, rayParams)
 		local rayHigh = Workspace:Raycast(originHigh, direction * distance, rayParams)
 		
 		local distLow = rayLow and (rayLow.Position - rootPart.Position).Magnitude or distance
 		local distHigh = rayHigh and (rayHigh.Position - rootPart.Position).Magnitude or distance
-		
-		-- Tomamos la distancia del objeto más cercano que obstruya el paso
 		local effectiveDistance = math.min(distLow, distHigh)
 		
-		-- Si detectamos un objeto o caja decorativa muy cerca del frente, preparamos salto reactivo
-		if effectiveDistance < 4.5 then
+		-- Si detectamos una caja o baranda baja en el camino corto, saltamos de inmediato
+		if effectiveDistance < 4 then
 			humanoid.Jump = true
 		end
 		
-		-- Buscador estricto de pasillos limpios y amplios del Sector 1
-		if effectiveDistance > maxFreeSpace and effectiveDistance > 18 then
+		-- Elige el pasillo habilitado disponible más óptimo en el entorno cerrado
+		if effectiveDistance > maxFreeSpace and effectiveDistance > 8 then
 			maxFreeSpace = effectiveDistance
-			-- Guardamos la coordenada final con margen de seguridad para no rozar esquinas
-			bestPoint = rootPart.Position + direction * (effectiveDistance - 6)
+			-- Dejamos un margen de 4 unidades para no chocar de frente al girar en las esquinas
+			bestPoint = rootPart.Position + direction * (effectiveDistance - 4)
 		end
 	end
 	return bestPoint
 end
 
 -- =========================================================================
--- MOTOR DE DESLIZAMIENTO CON INTERPOLACIÓN (LERP) Y ANIMACIÓN
+-- MOTOR DE MOVIMIENTO FLUIDO Y CALIBRACIÓN DE PASO LENTO
 -- =========================================================================
 RunService.Heartbeat:Connect(function(deltaTime)
 	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
 	
+	-- Estado de acecho estático breve en la esquina del pasillo
 	if isResting then
+		renderMoveDirection = Vector3.new()
 		restTimer = restTimer - deltaTime
 		if restTimer <= 0 then
 			isResting = false
-			targetPosition = calculateNewPatrolPoint()
+			targetPosition = calculateSector1Point() -- Reacción instantánea al buscar nueva ruta
 		end
 		return
 	end
@@ -143,27 +145,26 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	local flatTargetPos = Vector3.new(targetPosition.X, 0, targetPosition.Z)
 	local distance = (flatCharacterPos - flatTargetPos).Magnitude
 	
-	if distance > 3.5 then
-		-- CALIBRACIÓN EXACTA: 9.8 studs/sec es la velocidad real de caminata pasiva del Lurker
-		local speed = 9.8 
+	if distance > 2.5 then
+		-- VELOCIDAD CALIBRADA: 6.5 es el paso real de caminata lenta de los bots en pasillos cerrados
+		local speed = 6.5 
 		local moveDirection = (flatTargetPos - flatCharacterPos).Unit
 		
-		-- Desplazamiento matemático continuo
+		-- Desplazamiento cardinal continuo libre de lag
 		local nextPosition = rootPart.Position + moveDirection * (speed * deltaTime)
 		
-		-- TRUCO DE FLUIDEZ DE IA (LERP): Suavizamos el giro del cuerpo.
-		-- El personaje alineará su torso gradualmente (0.15 por cuadro) simulando un movimiento orgánico.
-		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 12 * deltaTime).Unit
+		-- Suavizado Lerp incrementado (18 * deltaTime) para que gire el cuerpo rápido en esquinas de 90°
+		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 18 * deltaTime).Unit
 		rootPart.CFrame = CFrame.lookAt(nextPosition, rootPart.Position + currentVisualHeading)
 		
-		-- Sincronización forzada de la animación de caminata lenta
+		-- Activación constante de las animaciones nativas de caminar
 		pcall(function()
 			humanoid.RootPart.AssemblyLinearVelocity = moveDirection * speed
 		end)
 	else
-		-- Pausa estática característica al terminar una caminata larga
+		-- Al llegar a la esquina, se detiene brevemente a acechar (estilo Lurker del Sector-1)
 		isResting = true
-		restTimer = math.random(18, 30) / 10 -- Entre 1.8 y 3.0 segundos acechando completamente quieto
+		restTimer = math.random(5, 12) / 10 -- Pausa muy corta de 0.5 a 1.2 segundos
 		
 		pcall(function()
 			humanoid.RootPart.AssemblyLinearVelocity = Vector3.new()
