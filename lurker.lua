@@ -11,7 +11,7 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
-getgenv().LurkerAI_Enabled = true
+getgenv().LurkerAI_Enabled = false
 
 -- =========================================================================
 -- INTERFAZ GRÁFICA (MENÚ DE CONTROL)
