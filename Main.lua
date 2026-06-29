@@ -1,5 +1,5 @@
 --[[
-    LURKER AUTOPILOT - PARTE 1 (CORE DE EVASIÓN SIN BUCLOS)
+    LURKER AUTOPILOT - REGRESO ESTABLE TOTAL (PARTE 1)
     Pega esto al inicio de tu archivo lurker.lua en GitHub.
 --]]
 
@@ -12,9 +12,17 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
+-- Limpieza y reinicio estricto de variables para evitar bloqueos de Solara
 getgenv().LurkerAI_Enabled = false
 
--- Interfaz Gráfica Estable
+-- Remover menús viejos si quedaron flotando en tu pantalla de ejecuciones pasadas
+if player:WaitForChild("PlayerGui"):FindFirstChild("LurkerControlGui") then
+	player.PlayerGui.LurkerControlGui:Destroy()
+end
+
+-- =========================================================================
+-- INTERFAZ GRÁFICA (MENÚ DE CONTROL ESTABLE)
+-- =========================================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "LurkerControlGui"
 screenGui.ResetOnSpawn = false
@@ -36,7 +44,7 @@ uiCorner.Parent = mainFrame
 local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, 0, 0, 35)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "LURKER AUTOPILOT"
+titleLabel.Text = "Solara Bot Behavior (SIMPLE)"
 titleLabel.TextColor3 = Color3.fromRGB(200, 50, 50)
 titleLabel.TextSize = 14
 titleLabel.Font = Enum.Font.SourceSansBold
@@ -56,13 +64,11 @@ local buttonCorner = Instance.new("UICorner")
 buttonCorner.CornerRadius = UDim.new(0, 6)
 buttonCorner.Parent = toggleButton
 
--- Variables fundamentales de control
-getgenv().TargetLurkerPosition = rootPart.Position
+-- Variables del motor de movimiento estable
+local targetPosition = rootPart.Position
 local isResting = false
 local restTimer = 0
 local currentVisualHeading = rootPart.CFrame.LookVector
-local lastVisitedPosition = rootPart.Position
-local lastEvasionCheck = 0
 
 -- Variables del sistema de comandos de voz Z
 local leaderCharacter = nil      
@@ -70,77 +76,36 @@ local lastLeaderMoveTime = 0
 local leaderLastPos = Vector3.new()
 local voiceCommandRange = 45     
 
+-- Memoria a corto plazo optimizada (Bypass de atascos)
+local lastVisitedPosition = rootPart.Position
+
 toggleButton.MouseButton1Click:Connect(function()
 	getgenv().LurkerAI_Enabled = not getgenv().LurkerAI_Enabled
 	
 	if getgenv().LurkerAI_Enabled then
-		toggleButton.Text = "ESTADO: ACTIVO"
+		toggleButton.Text = "STATE: ACTIVE"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
-		getgenv().TargetLurkerPosition = rootPart.Position
+		targetPosition = rootPart.Position
 		currentVisualHeading = rootPart.CFrame.LookVector
 		isResting = false
 		leaderCharacter = nil
 		lastVisitedPosition = rootPart.Position
-		lastEvasionCheck = 0
-		print("[AI] Inicializado motor con bypass anti-atasco de cajas.")
+		print("[AI] Regresando de forma forzada a versión estable limpia.")
 	else
-		toggleButton.Text = "ESTADO: DESACTIVADO"
+		toggleButton.Text = "STATE: DEACTIVATED"
 		toggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 		leaderCharacter = nil
 	end
 end)
 
--- Escáner Inteligente de Pasillos
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local function calculateSmartLurkerPath()
-	rayParams.FilterDescendantsInstances = {character}
-	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
-	local validOptions = {} 
-	local backupOptions = {}
-	
-	for i = 1, 12 do
-		local angle = math.rad(i * (360 / 12))
-		local distance = math.random(45, 80) 
-		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
-		
-		local rayLow = Workspace:Raycast(origin - Vector3.new(0,0.6,0), direction * distance, rayParams)
-		local rayHigh = Workspace:Raycast(origin + Vector3.new(0,0.5,0), direction * distance, rayParams)
-		local effectiveDistance = math.min(rayLow and (rayLow.Position - rootPart.Position).Magnitude or distance, rayHigh and (rayHigh.Position - rootPart.Position).Magnitude or distance)
-		
-		if effectiveDistance > 15 then
-			local potentialPoint = rootPart.Position + direction * (effectiveDistance - 5)
-			local isReturnPath = (potentialPoint - lastVisitedPosition).Magnitude < 25
-			if not isReturnPath then
-				table.insert(validOptions, potentialPoint)
-			else
-				table.insert(backupOptions, potentialPoint)
-			end
-		end
-	end
-	
-	local selectedPoint = validOptions[math.random(1, #validOptions)] or backupOptions[math.random(1, #backupOptions)]
-	if not selectedPoint then
-		selectedPoint = rootPart.Position + Vector3.new(math.random(-20,20), 0, math.random(-20,20))
-	end
-	lastVisitedPosition = rootPart.Position
-	return selectedPoint
-end
-
--- =========================================================================
--- OYENTE TÁCTICO DE VOICELINES Z
--- =========================================================================
+-- Oyente Táctico del Chat
 local function setupVoiceCommandListener(otherPlayer)
 	otherPlayer.Chatted:Connect(function(message)
-		if not getgenv().LurkerAI_Enabled then return end
-		if otherPlayer == player then return end 
-		
+		if not getgenv().LurkerAI_Enabled or otherPlayer == player then return end 
 		local otherChar = otherPlayer.Character
 		if not otherChar or not otherChar:FindFirstChild("HumanoidRootPart") then return end
 		
 		local distanceToSpeaker = (rootPart.Position - otherChar.HumanoidRootPart.Position).Magnitude
-		
 		if distanceToSpeaker <= voiceCommandRange then
 			if message == "Follow Me!" or message == "Follow me!" or message == "Sígueme!" or message == "Sigueme!" then
 				leaderCharacter = otherChar
@@ -157,7 +122,57 @@ for _, p in ipairs(Players:GetPlayers()) do setupVoiceCommandListener(p) end
 Players.PlayerAdded:Connect(setupVoiceCommandListener)
 
 -- =========================================================================
--- MOTOR DE MOVIMIENTO GENERAL (SOLO PATRULLA Y SEGUIMIENTO Z - RENDIMIENTO MÁXIMO)
+-- ESCÁNER INTELIGENTE DE PASILLOS (SECTOR-1 SIN CONFUSION)
+-- =========================================================================
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function calculateSmartLurkerPath()
+	rayParams.FilterDescendantsInstances = {character}
+	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
+	
+	local validOptions = {} 
+	local backupOptions = {}
+	
+	for i = 1, 12 do
+		local angle = math.rad(i * (360 / 12))
+		local distance = math.random(45, 80) 
+		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
+		
+		local rayLow = Workspace:Raycast(origin - Vector3.new(0,0.6,0), direction * distance, rayParams)
+		local rayHigh = Workspace:Raycast(origin + Vector3.new(0,0.5,0), direction * distance, rayParams)
+		local effectiveDistance = math.min(rayLow and (rayLow.Position - rootPart.Position).Magnitude or distance, rayHigh and (rayHigh.Position - rootPart.Position).Magnitude or distance)
+		
+		if effectiveDistance < 4.5 then humanoid.Jump = true end
+		
+		if effectiveDistance > 15 then
+			local potentialPoint = rootPart.Position + direction * (effectiveDistance - 5)
+			local isReturnPath = (potentialPoint - lastVisitedPosition).Magnitude < 25
+			
+			if not isReturnPath then
+				table.insert(validOptions, potentialPoint)
+			else
+				table.insert(backupOptions, potentialPoint)
+			end
+		end
+	end
+	
+	local selectedPoint = nil
+	if #validOptions > 0 then
+		selectedPoint = validOptions[math.random(1, #validOptions)]
+	elseif #backupOptions > 0 then
+		selectedPoint = backupOptions[math.random(1, #backupOptions)]
+	else
+		local randomAngle = math.rad(math.random(0, 360))
+		selectedPoint = rootPart.Position + Vector3.new(math.cos(randomAngle) * 20, 0, math.sin(randomAngle) * 20)
+	end
+	
+	lastVisitedPosition = rootPart.Position
+	return selectedPoint
+end
+
+-- =========================================================================
+-- MOTOR DE MOVIMIENTO GENERAL (SOLO PATRULLA Y SEGUIMIENTO Z)
 -- =========================================================================
 RunService.Heartbeat:Connect(function(deltaTime)
 	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
@@ -215,6 +230,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			destinationPos = targetPosition
 			moveDirection = (flatTargetPos - flatCharacterPos).Unit
 		else
+			-- Pausa ultracorta de 0.3 a 0.6 segundos
 			isResting = true
 			restTimer = math.random(3, 6) / 10 
 			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
@@ -222,7 +238,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		end
 	end
 	
-	-- Ejecución de traslación común y ultra optimizada en el mapa
+	-- Traslación física final en el mapa
 	if destinationPos and moveDirection.Magnitude > 0 then
 		local nextPosition = rootPart.Position + moveDirection * (currentSpeed * deltaTime)
 		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 14 * deltaTime).Unit
@@ -237,4 +253,3 @@ end)
 humanoid.Died:Connect(function()
 	screenGui:Destroy()
 end)
-
