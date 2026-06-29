@@ -157,10 +157,16 @@ for _, p in ipairs(Players:GetPlayers()) do setupVoiceCommandListener(p) end
 Players.PlayerAdded:Connect(setupVoiceCommandListener)
 
 -- =========================================================================
--- FUNCIÓN DE EVASIÓN AVANZADA (Solución definitiva para cajas enfrentadas)
+-- FUNCIÓN DE EVASIÓN AVANZADA (Modo de Giro Prioritario Temporal)
 -- =========================================================================
-local function checkObstaclesAndSteer(currentDir)
-	if os.clock() - lastEvasionCheck < 0.05 then return currentDir end
+local function checkObstaclesAndSteer(currentDir, deltaTime)
+	-- SISTEMA DE ESCAPE REFORZADO: Si el interruptor de huida está activo, mantiene el rumbo de escape
+	if forcedEscapeTimer > 0 then
+		forcedEscapeTimer = forcedEscapeTimer - deltaTime
+		return forcedEscapeDirection
+	end
+
+	if os.clock() - lastEvasionCheck < 0.06 then return currentDir end
 	lastEvasionCheck = os.clock()
 	
 	rayParams.FilterDescendantsInstances = {character}
@@ -170,29 +176,30 @@ local function checkObstaclesAndSteer(currentDir)
 	local leftSteer = Vector3.new(-forward.Z, 0, forward.X).Unit
 	local rightSteer = Vector3.new(forward.Z, 0, -forward.X).Unit
 	
-	-- Sensores tridimensionales de proximidad corta
-	local rayCenter = Workspace:Raycast(origin, forward * 6.5, rayParams)
-	local rayLeft = Workspace:Raycast(origin, (forward * 0.8 + leftSteer * 0.4).Unit * 6, rayParams)
-	local rayRight = Workspace:Raycast(origin, (forward * 0.8 + rightSteer * 0.4).Unit * 6, rayParams)
+	-- Matriz de 3 rayos tridimensionales cortos (7 studs)
+	local rayCenter = Workspace:Raycast(origin, forward * 7, rayParams)
+	local rayLeft = Workspace:Raycast(origin, (forward * 0.8 + leftSteer * 0.4).Unit * 6.5, rayParams)
+	local rayRight = Workspace:Raycast(origin, (forward * 0.8 + rightSteer * 0.4).Unit * 6.5, rayParams)
 	
 	if rayCenter or rayLeft or rayRight then
-		local checkLeft = Workspace:Raycast(origin, leftSteer * 9, rayParams)
-		local checkRight = Workspace:Raycast(origin, rightSteer * 9, rayParams)
+		local checkLeft = Workspace:Raycast(origin, leftSteer * 10, rayParams)
+		local checkRight = Workspace:Raycast(origin, rightSteer * 10, rayParams)
 		
 		if not checkLeft then
-			return (forward * 0.4 + leftSteer * 0.8).Unit
+			return (forward * 0.5 + leftSteer * 0.8).Unit
 		elseif not checkRight then
-			return (forward * 0.4 + rightSteer * 0.8).Unit
+			return (forward * 0.5 + rightSteer * 0.8).Unit
 		else
-			-- CORRECCIÓN INTEGRAL: Si ambos flancos tienen cajas o muros (encajonado),
-			-- obligamos instantáneamente a la IA a calcular un pasillo nuevo en vez de trabarse.
-			local newPath = calculateSmartLurkerPath()
-			getgenv().TargetLurkerPosition = newPath
+			-- TRUCO CORE: Si ambos lados están bloqueados (dos cajas frente a frente)
+			-- Activamos el Steering Lock por 0.8 segundos para dar la vuelta sin interferencias
+			forcedEscapeTimer = 0.8
 			
-			-- Devolvemos la dirección exacta hacia el nuevo punto libre para romper el bucle rígido
-			local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
-			local flatNewPath = Vector3.new(newPath.X, 0, newPath.Z)
-			return (flatNewPath - flatChar).Unit
+			-- Recalculamos un pasillo largo nuevo inmediatamente
+			targetPosition = calculateSmartLurkerPath()
+			
+			-- El vector de escape forzado apuntará estrictamente en sentido contrario (180°)
+			forcedEscapeDirection = -forward
+			return forcedEscapeDirection
 		end
 	end
 	
@@ -200,7 +207,7 @@ local function checkObstaclesAndSteer(currentDir)
 end
 
 -- =========================================================================
--- MOTOR DE MOVIMIENTO GENERAL CORREGIDO
+-- MOTOR DE MOVIMIENTO GENERAL (SOLO PATRULLA Y SEGUIMIENTO Z)
 -- =========================================================================
 RunService.Heartbeat:Connect(function(deltaTime)
 	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
@@ -209,8 +216,9 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	local moveDirection = Vector3.new()
 	local destinationPos = nil
 	
-	-- MODO: FOLLOW ME ACTIVADO
+	-- ESCORTANDO A JUGADOR (ORDEN "FOLLOW ME")
 	if leaderCharacter and leaderCharacter:FindFirstChild("HumanoidRootPart") and leaderCharacter:FindFirstChild("Humanoid") and leaderCharacter.Humanoid.Health > 0 then
+		forcedEscapeTimer = 0 -- Cancela bloqueos si hay orden directa
 		local leaderRoot = leaderCharacter.HumanoidRootPart
 		local distanceToLeader = (rootPart.Position - leaderRoot.Position).Magnitude
 		
@@ -221,7 +229,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		
 		if (os.clock() - lastLeaderMoveTime) > 15 then
 			leaderCharacter = nil
-			getgenv().TargetLurkerPosition = calculateSmartLurkerPath()
+			targetPosition = calculateSmartLurkerPath()
 			return
 		end
 		
@@ -239,27 +247,28 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			return
 		end
 		
-	-- MODO: PATRULLA DE ACECHO INFINITA
+	-- PATRULLA DE ACECHO ESTÁNDAR
 	else
 		if isResting then
+			forcedEscapeTimer = 0
 			restTimer = restTimer - deltaTime
 			if restTimer <= 0 then
 				isResting = false
-				getgenv().TargetLurkerPosition = calculateSmartLurkerPath() 
+				targetPosition = calculateSmartLurkerPath() 
 			end
 			return
 		end
 		
 		local flatCharacterPos = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
-		local flatTargetPos = Vector3.new(getgenv().TargetLurkerPosition.X, 0, getgenv().TargetLurkerPosition.Z)
+		local flatTargetPos = Vector3.new(targetPosition.X, 0, targetPosition.Z)
 		local distance = (flatCharacterPos - flatTargetPos).Magnitude
 		
 		if distance > 3.5 then
-			destinationPos = getgenv().TargetLurkerPosition
+			destinationPos = targetPosition
 			local rawDirection = (flatTargetPos - flatCharacterPos).Unit
 			
-			-- La función ahora devuelve el nuevo rumbo limpio si detecta que estás atrapado
-			moveDirection = checkObstaclesAndSteer(rawDirection)
+			-- Pasamos el deltaTime para controlar el temporizador de escape prioritario
+			moveDirection = checkObstaclesAndSteer(rawDirection, deltaTime)
 		else
 			isResting = true
 			restTimer = math.random(3, 6) / 10 
@@ -268,7 +277,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		end
 	end
 	
-	-- Traslación física final fluida
+	-- Ejecución de traslación común y fluida en el mapa
 	if destinationPos and moveDirection.Magnitude > 0 then
 		local nextPosition = rootPart.Position + moveDirection * (currentSpeed * deltaTime)
 		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 14 * deltaTime).Unit
@@ -283,3 +292,4 @@ end)
 humanoid.Died:Connect(function()
 	screenGui:Destroy()
 end)
+
