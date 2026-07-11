@@ -1,6 +1,6 @@
 -- [[
-    LURKER AUTOPILOT - REACTIVE DIRECTIONAL ESCAPE ENGINE (V4.1 - FIX LOGIC ORDER)
-    All interface in English. Fixed initialization ordering bug.
+    LURKER AUTOPILOT - REACTIVE DIRECTIONAL ESCAPE ENGINE (V4 - FIX LOGIC ORDER)
+    All interface at English. Fixed initialization ordering bug.
 --]]
 
 local Players = game:GetService("Players")
