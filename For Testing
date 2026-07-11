@@ -1,6 +1,6 @@
 -- [[
-    LURKER AUTOPILOT - REACTIVE DIRECTIONAL ESCAPE ENGINE (V4.0)
-    All interface in English. Pure geometric wall avoidance without history.
+    LURKER AUTOPILOT - REACTIVE DIRECTIONAL ESCAPE ENGINE (V4.1 - FIX LOGIC ORDER)
+    All interface in English. Fixed initialization ordering bug.
 --]]
 
 local Players = game:GetService("Players")
@@ -19,6 +19,58 @@ getgenv().GilbertFootSpeed = 1.7
 
 if player:WaitForChild("PlayerGui"):FindFirstChild("LurkerControlGui") then
 	player.PlayerGui.LurkerControlGui:Destroy()
+end
+
+-- =========================================================================
+-- SYSTEM ENGINE CORE VARIABLES
+-- =========================================================================
+local targetPosition = rootPart.Position
+local isResting = false
+local restTimer = 0
+local currentVisualHeading = rootPart.CFrame.LookVector
+local dangerousZones = {} 
+
+local currentEnemyTarget = nil
+local combatScanRange = 30 
+local attackTriggerRange = 9 
+local lastMeleeStrikeTime = 0
+local meleeCooldown = 2.4 
+local isExecutingHitAndRun = false
+
+-- =========================================================================
+-- ADVANCED RADIAL PATROL ROUTING GENERATOR
+-- =========================================================================
+local function calculateSmartLurkerPath()
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = {character}
+	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
+	local validOptions = {}
+	
+	for i = 1, 12 do
+		local angle = math.rad(i * 30)
+		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
+		local ray = Workspace:Raycast(origin, direction * 45, rayParams)
+		local dist = ray and (ray.Position - rootPart.Position).Magnitude or 45
+		
+		if dist > 12 then
+			local potentialPoint = rootPart.Position + direction * (dist - 4)
+			
+			local isSafe = true
+			for dangerPos, _ in pairs(dangerousZones) do
+				if (potentialPoint - dangerPos).Magnitude < 25 then
+					isSafe = false
+					break
+				end
+			end
+			
+			if isSafe then
+				table.insert(validOptions, potentialPoint)
+			end
+		end
+	end
+	
+	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or rootPart.Position
 end
 
 -- =========================================================================
@@ -51,7 +103,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -40, 0, 35)
 titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "REACTIVE ESCAPE V4"
+titleLabel.Text = "REACTIVE ESCAPE V4.1"
 titleLabel.TextColor3 = Color3.fromRGB(245, 65, 65)
 titleLabel.TextSize = 13
 titleLabel.Font = Enum.Font.Code
@@ -174,24 +226,6 @@ plusButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- =========================================================================
--- SYSTEM ENGINE CORE VARIABLES
--- =========================================================================
-local targetPosition = rootPart.Position
-local isResting = false
-local restTimer = 0
-local currentVisualHeading = rootPart.CFrame.LookVector
-local dangerousZones = {} 
-
-local currentEnemyTarget = nil
-local combatScanRange = 30 
-local attackTriggerRange = 9 
-local lastMeleeStrikeTime = 0
-local meleeCooldown = 2.4 
-local isExecutingHitAndRun = false
-
-local calculateSmartLurkerPath
-
 -- Clean old dangerous zones dynamically
 task.spawn(function()
 	while true do
@@ -306,42 +340,6 @@ toggleButton.MouseButton1Click:Connect(function()
 end)
 
 -- =========================================================================
--- ADVANCED RADIAL PATROL ROUTING GENERATOR
--- =========================================================================
-calculateSmartLurkerPath = function()
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = {character}
-	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
-	local validOptions = {}
-	
-	for i = 1, 12 do
-		local angle = math.rad(i * 30)
-		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
-		local ray = Workspace:Raycast(origin, direction * 45, rayParams)
-		local dist = ray and (ray.Position - rootPart.Position).Magnitude or 45
-		
-		if dist > 12 then
-			local potentialPoint = rootPart.Position + direction * (dist - 4)
-			
-			local isSafe = true
-			for dangerPos, _ in pairs(dangerousZones) do
-				if (potentialPoint - dangerPos).Magnitude < 25 then
-					isSafe = false
-					break
-				end
-			end
-			
-			if isSafe then
-				table.insert(validOptions, potentialPoint)
-			end
-		end
-	end
-	
-	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or rootPart.Position
-end
-
--- =========================================================================
 -- MAIN EXECUTION MOTOR
 -- =========================================================================
 RunService.Heartbeat:Connect(function(deltaTime)
@@ -384,12 +382,11 @@ RunService.Heartbeat:Connect(function(deltaTime)
 				rayParams.FilterDescendantsInstances = {character}
 				
 				local vectorToEnemy = (Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)).Unit
-				local bestEscapeDirection = -vectorToEnemy -- Base direction (Direct back)
+				local bestEscapeDirection = -vectorToEnemy 
 				local maximumOpenDistance = 0
 				
-				-- Scan 8 angles in a wide arc behind and to the sides to find the deepest open corridor
 				for angleIdx = -4, 4 do
-					local rad = math.rad(angleIdx * 35) -- Scans wide 280-degree arc
+					local rad = math.rad(angleIdx * 35) 
 					local rotDir = Vector3.new(
 						-vectorToEnemy.X * math.cos(rad) - -vectorToEnemy.Z * math.sin(rad),
 						0,
@@ -405,7 +402,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 					end
 				end
 				
-				-- Set final absolute destination coordinate away from enemy
 				local finalRunDistance = math.max(15, maximumOpenDistance - 4)
 				targetPosition = rootPart.Position + (bestEscapeDirection * finalRunDistance)
 				
@@ -417,7 +413,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 					
 					VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.LeftShift, false, game)
 					
-					-- Keep full physics sprint active for 1.35 seconds or until destination reached
 					local escapeTimeout = 1.35
 					while escapeTimeout > 0 do
 						escapeTimeout = escapeTimeout - task.wait()
