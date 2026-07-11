@@ -227,7 +227,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 				targetPosition = calculateSmartLurkerPath() 
 			end
 			
-			-- Si está quieto descansando, frenamos los pasos a velocidad normal
+			-- Si está quieto esperando, frenamos los pasos a velocidad normal
 			local animator = humanoid:FindFirstChildOfClass("Animator")
 			if animator then
 				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
@@ -245,9 +245,17 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			destinationPos = targetPosition
 			moveDirection = (flatTargetPos - flatCharacterPos).Unit
 		else
+			-- =========================================================================
+			-- CRONÓMETRO ALEATORIO ESTILO ENTIDAD (NUEVO)
+			-- =========================================================================
 			isResting = true
-			restTimer = math.random(3, 6) / 10 
+			
+			-- math.random(0, 100) / 10 genera decimales exactos entre 0.0 y 10.0 segundos
+			-- Así puede pararse 1.2 segundos, 5.7 segundos, 0.4 segundos o hasta 10 segundos completos.
+			restTimer = math.random(0, 100) / 10 
+			
 			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+			print("[AI] Destino alcanzado. Esperando por: " .. string.format("%.1f", restTimer) .. " segundos antes de patrullar.")
 			return
 		end
 	end
