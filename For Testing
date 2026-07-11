@@ -1,5 +1,6 @@
 --[[
-    LURKER AUTOPILOT - REGRESO ESTABLE TOTAL (PARTE 1)
+    LURKER AUTOPILOT - EXPERIMENTAL PROCEDURAL ANIMATION TEST
+    All interface in English. Math-based walking animation built-in.
 --]]
 
 local Players = game:GetService("Players")
@@ -11,16 +12,17 @@ local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
 
--- Limpieza y reinicio estricto de variables para evitar bloqueos de Solara
+-- Global configuration variables
 getgenv().LurkerAI_Enabled = false
+getgenv().GilbertFootSpeed = 1.7 
 
--- Remover menús viejos si quedaron flotando en tu pantalla de ejecuciones pasadas
+-- Remove legacy menus
 if player:WaitForChild("PlayerGui"):FindFirstChild("LurkerControlGui") then
 	player.PlayerGui.LurkerControlGui:Destroy()
 end
 
 -- =========================================================================
--- GRAPHIC INTERFACE
+-- INTERFACE SETUP (ENGLISH)
 -- =========================================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "LurkerControlGui"
@@ -28,9 +30,9 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 220, 0, 130)
+mainFrame.Size = UDim2.new(0, 230, 0, 210)
 mainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
@@ -40,250 +42,295 @@ local uiCorner = Instance.new("UICorner")
 uiCorner.CornerRadius = UDim.new(0, 8)
 uiCorner.Parent = mainFrame
 
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Color = Color3.fromRGB(45, 45, 45)
+uiStroke.Thickness = 1
+uiStroke.Parent = mainFrame
+
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, 0, 0, 35)
+titleLabel.Size = UDim2.new(1, -40, 0, 35)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Solara Bot Behavior (SIMPLE)"
-titleLabel.TextColor3 = Color3.fromRGB(200, 50, 50)
-titleLabel.TextSize = 14
-titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.Text = "GILBERT ANIM TEST"
+titleLabel.TextColor3 = Color3.fromRGB(220, 60, 60)
+titleLabel.TextSize = 13
+titleLabel.Font = Enum.Font.Code
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = mainFrame
 
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -35)
+contentFrame.Position = UDim2.new(0, 0, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
 local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0, 180, 0, 45)
-toggleButton.Position = UDim2.new(0, 20, 0, 55)
-toggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-toggleButton.Text = "STATE: DEACTIVATED"
-toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleButton.TextSize = 14
-toggleButton.Font = Enum.Font.SourceSans
-toggleButton.Parent = mainFrame
+toggleButton.Size = UDim2.new(0, 190, 0, 35)
+toggleButton.Position = UDim2.new(0, 20, 0, 5)
+toggleButton.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
+toggleButton.Text = "SYSTEM: DISABLED"
+toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
+toggleButton.TextSize = 13
+toggleButton.Font = Enum.Font.SourceSansBold
+toggleButton.Parent = contentFrame
 
 local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 6)
+buttonCorner.CornerRadius = UDim.new(0, 5)
 buttonCorner.Parent = toggleButton
 
--- Variables del motor de movimiento estable
+local buttonStroke = Instance.new("UIStroke")
+buttonStroke.Color = Color3.fromRGB(100, 40, 40)
+buttonStroke.Thickness = 1
+buttonStroke.Parent = toggleButton
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0, 190, 0, 25)
+statusLabel.Position = UDim2.new(0, 20, 0, 45)
+statusLabel.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+statusLabel.Text = "Status: Idle"
+statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.SourceSansItalic
+statusLabel.Parent = contentFrame
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 4)
+statusCorner.Parent = statusLabel
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(1, 0, 0, 25)
+speedLabel.Position = UDim2.new(0, 0, 0, 80)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Anim Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+speedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+speedLabel.TextSize = 13
+speedLabel.Font = Enum.Font.SourceSans
+speedLabel.Parent = contentFrame
+
+local minusButton = Instance.new("TextButton")
+minusButton.Size = UDim2.new(0, 45, 0, 30)
+minusButton.Position = UDim2.new(0, 45, 0, 110)
+minusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+minusButton.Text = "-"
+minusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+minusButton.TextSize = 18
+minusButton.Font = Enum.Font.SourceSansBold
+minusButton.Parent = contentFrame
+
+local minusCorner = Instance.new("UICorner")
+minusCorner.CornerRadius = UDim.new(0, 4)
+minusCorner.Parent = minusButton
+
+local plusButton = Instance.new("TextButton")
+plusButton.Size = UDim2.new(0, 45, 0, 30)
+plusButton.Position = UDim2.new(0, 140, 0, 110)
+plusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+plusButton.Text = "+"
+plusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+plusButton.TextSize = 18
+plusButton.Font = Enum.Font.SourceSansBold
+plusButton.Parent = contentFrame
+
+local plusCorner = Instance.new("UICorner")
+plusCorner.CornerRadius = UDim.new(0, 4)
+plusCorner.Parent = plusButton
+
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Size = UDim2.new(0, 25, 0, 25)
+minimizeButton.Position = UDim2.new(1, -30, 0, 5)
+minimizeButton.BackgroundTransparency = 1
+minimizeButton.Text = "-"
+minimizeButton.TextColor3 = Color3.fromRGB(150, 150, 150)
+minimizeButton.TextSize = 18
+minimizeButton.Font = Enum.Font.SourceSansBold
+minimizeButton.Parent = mainFrame
+
+local isMinimized = false
+minimizeButton.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		mainFrame.Size = UDim2.new(0, 230, 0, 35)
+		minimizeButton.Text = "+"
+		contentFrame.Visible = false
+	else
+		mainFrame.Size = UDim2.new(0, 230, 0, 210)
+		minimizeButton.Text = "-"
+		contentFrame.Visible = true
+	end
+end)
+
+minusButton.MouseButton1Click:Connect(function()
+	if getgenv().GilbertFootSpeed > 0.5 then
+		getgenv().GilbertFootSpeed = math.max(0.5, getgenv().GilbertFootSpeed - 0.1)
+		speedLabel.Text = "Anim Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+	end
+end)
+
+plusButton.MouseButton1Click:Connect(function()
+	if getgenv().GilbertFootSpeed < 5.0 then
+		getgenv().GilbertFootSpeed = math.min(5.0, getgenv().GilbertFootSpeed + 0.1)
+		speedLabel.Text = "Anim Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+	end
+end)
+
+-- =========================================================================
+-- MOTOR DE ANIMACIÓN PROCEDURAL (MATEMÁTICA INTEGRADA)
+-- =========================================================================
+local function getMotor6D(partName, motorName)
+	local p = character:FindFirstChild(partName)
+	if p then return p:FindFirstChild(motorName) end
+	return nil
+end
+
+local function applyProceduralWalk(angleTime, isMovingFlag)
+	-- Intentar mapear motores R15 comunes
+	local joints = {
+		LeftHip = getMotor6D("LeftUpperLeg", "LeftHip") or getMotor6D("Torso", "Left Hip"),
+		RightHip = getMotor6D("RightUpperLeg", "RightHip") or getMotor6D("Torso", "Right Hip"),
+		LeftShoulder = getMotor6D("LeftUpperArm", "LeftShoulder") or getMotor6D("Torso", "Left Shoulder"),
+		RightShoulder = getMotor6D("RightUpperArm", "RightShoulder") or getMotor6D("Torso", "Right Shoulder"),
+		LowerTorso = getMotor6D("LowerTorso", "Root") or getMotor6D("HumanoidRootPart", "RootJoint")
+	}
+
+	if isMovingFlag then
+		-- Frecuencia base multiplicada por la velocidad del menú
+		local speedMultiplier = 8 * getgenv().GilbertFootSpeed
+		local t = angleTime * speedMultiplier
+		
+		-- Calcular ondas Seno / Coseno para simular balanceo orgánico
+		local limbWave = math.sin(t) * 0.45 
+		local bodyBob = math.abs(math.sin(t)) * 0.15 -- El torso baja y sube levemente
+		
+		-- Aplicar rotaciones angulares cruzadas (brazo izquierdo adelante -> pierna derecha adelante)
+		if joints.LeftHip then joints.LeftHip.Transform = CFrame.Angles(limbWave, 0, 0) end
+		if joints.RightHip then joints.RightHip.Transform = CFrame.Angles(-limbWave, 0, 0) end
+		if joints.LeftShoulder then joints.LeftShoulder.Transform = CFrame.Angles(-limbWave * 0.8, 0, math.rad(-5)) end
+		if joints.RightShoulder then joints.RightShoulder.Transform = CFrame.Angles(limbWave * 0.8, 0, math.rad(5)) end
+		if joints.LowerTorso then joints.LowerTorso.Transform = CFrame.new(0, -bodyBob, 0) * CFrame.Angles(0, math.sin(t)*0.05, 0) end
+	else
+		-- Resetear extremidades a posición neutral si se detiene
+		for _, joint in pairs(joints) do
+			if joint then joint.Transform = CFrame.new() end
+		end
+	end
+end
+
+-- =========================================================================
+-- CONTROL LOGIC & AUTOPILOT ENGINE
+-- =========================================================================
 local targetPosition = rootPart.Position
 local isResting = false
 local restTimer = 0
 local currentVisualHeading = rootPart.CFrame.LookVector
-
--- Variables del sistema de comandos de voz Z
-local leaderCharacter = nil      
-local lastLeaderMoveTime = 0     
-local leaderLastPos = Vector3.new()
-local voiceCommandRange = 45     
-
--- Memoria a corto plazo optimizada (Bypass de atascos)
 local lastVisitedPosition = rootPart.Position
+
+local calculateSmartLurkerPath
 
 toggleButton.MouseButton1Click:Connect(function()
 	getgenv().LurkerAI_Enabled = not getgenv().LurkerAI_Enabled
-	
 	if getgenv().LurkerAI_Enabled then
-		toggleButton.Text = "STATE: ACTIVE"
-		toggleButton.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+		toggleButton.Text = "SYSTEM: ACTIVE"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(25, 40, 25)
+		toggleButton.TextColor3 = Color3.fromRGB(100, 220, 100)
+		buttonStroke.Color = Color3.fromRGB(40, 120, 40)
+		statusLabel.Text = "Initializing prowling engine..."
+		
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
 		targetPosition = rootPart.Position
-		currentVisualHeading = rootPart.CFrame.LookVector
-		isResting = false
-		leaderCharacter = nil
 		lastVisitedPosition = rootPart.Position
-		print("[AI] Regresando de forma forzada a versión estable limpia.")
+		isResting = false
+		
+		task.spawn(function()
+			task.wait(0.1)
+			if getgenv().LurkerAI_Enabled then targetPosition = calculateSmartLurkerPath() end
+		end)
 	else
-		toggleButton.Text = "STATE: DEACTIVATED"
-		toggleButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-		leaderCharacter = nil
+		toggleButton.Text = "SYSTEM: DISABLED"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
+		toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
+		buttonStroke.Color = Color3.fromRGB(100, 40, 40)
+		statusLabel.Text = "Status: Idle"
+		statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+		isResting = false
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+		applyProceduralWalk(0, false) -- Apagar animación
 	end
 end)
 
--- Oyente Táctico del Chat
-local function setupVoiceCommandListener(otherPlayer)
-	otherPlayer.Chatted:Connect(function(message)
-		if not getgenv().LurkerAI_Enabled or otherPlayer == player then return end 
-		local otherChar = otherPlayer.Character
-		if not otherChar or not otherChar:FindFirstChild("HumanoidRootPart") then return end
-		
-		local distanceToSpeaker = (rootPart.Position - otherChar.HumanoidRootPart.Position).Magnitude
-		if distanceToSpeaker <= voiceCommandRange then
-			if message == "Follow Me!" or message == "Follow me!" or message == "Sígueme!" or message == "Sigueme!" then
-				leaderCharacter = otherChar
-				leaderLastPos = otherChar.HumanoidRootPart.Position
-				lastLeaderMoveTime = os.clock()
-				isResting = false
-				print("[Voiceline Z] Siguiendo a: " .. otherPlayer.Name)
-			end
-		end
-	end)
-end
-
-for _, p in ipairs(Players:GetPlayers()) do setupVoiceCommandListener(p) end
-Players.PlayerAdded:Connect(setupVoiceCommandListener)
-
--- =========================================================================
--- HALL INTELLIGENT SCANNER (Sector-1)
--- =========================================================================
-local rayParams = RaycastParams.new()
-rayParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local function calculateSmartLurkerPath()
+calculateSmartLurkerPath = function()
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
 	rayParams.FilterDescendantsInstances = {character}
 	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
-	
-	local validOptions = {} 
-	local backupOptions = {}
+	local validOptions = {}
 	
 	for i = 1, 12 do
-		local angle = math.rad(i * (360 / 12))
-		local distance = math.random(45, 80) 
+		local angle = math.rad(i * 30)
 		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
-		
-		local rayLow = Workspace:Raycast(origin - Vector3.new(0,0.6,0), direction * distance, rayParams)
-		local rayHigh = Workspace:Raycast(origin + Vector3.new(0,0.5,0), direction * distance, rayParams)
-		local effectiveDistance = math.min(rayLow and (rayLow.Position - rootPart.Position).Magnitude or distance, rayHigh and (rayHigh.Position - rootPart.Position).Magnitude or distance)
-		
-		if effectiveDistance < 4.5 then humanoid.Jump = true end
-		
-		if effectiveDistance > 15 then
-			local potentialPoint = rootPart.Position + direction * (effectiveDistance - 5)
-			local isReturnPath = (potentialPoint - lastVisitedPosition).Magnitude < 25
-			
-			if not isReturnPath then
-				table.insert(validOptions, potentialPoint)
-			else
-				table.insert(backupOptions, potentialPoint)
-			end
-		end
-	end
-	
-	local selectedPoint = nil
-	if #validOptions > 0 then
-		selectedPoint = validOptions[math.random(1, #validOptions)]
-	elseif #backupOptions > 0 then
-		selectedPoint = backupOptions[math.random(1, #backupOptions)]
-	else
-		local randomAngle = math.rad(math.random(0, 360))
-		selectedPoint = rootPart.Position + Vector3.new(math.cos(randomAngle) * 20, 0, math.sin(randomAngle) * 20)
+		local ray = Workspace:Raycast(origin, direction * 50, rayParams)
+		local dist = ray and (ray.Position - rootPart.Position).Magnitude or 50
+		if dist > 15 then table.insert(validOptions, rootPart.Position + direction * (dist - 5)) end
 	end
 	
 	lastVisitedPosition = rootPart.Position
-	return selectedPoint
+	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or rootPart.Position
 end
 
--- =========================================================================
--- MOVEMENT ENGINE (MAIN)
--- =========================================================================
+-- HEARTBEAT EXECUTION LOOP
+local animTime = 0
+
 RunService.Heartbeat:Connect(function(deltaTime)
-	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
-	
-	local currentSpeed = 7.2 
-	local moveDirection = Vector3.new()
-	local destinationPos = nil
-	
-	-- ESCORTANDO A JUGADOR (ORDEN "FOLLOW ME")
-	if leaderCharacter and leaderCharacter:FindFirstChild("HumanoidRootPart") and leaderCharacter:FindFirstChild("Humanoid") and leaderCharacter.Humanoid.Health > 0 then
-		local leaderRoot = leaderCharacter.HumanoidRootPart
-		local distanceToLeader = (rootPart.Position - leaderRoot.Position).Magnitude
-		
-		if (leaderRoot.Position - leaderLastPos).Magnitude > 1.5 then
-			leaderLastPos = leaderRoot.Position
-			lastLeaderMoveTime = os.clock() 
-		end
-		
-		if (os.clock() - lastLeaderMoveTime) > 15 then
-			leaderCharacter = nil
-			targetPosition = calculateSmartLurkerPath()
-			return
-		end
-		
-		if distanceToLeader > 25 then currentSpeed = 15 end
-		
-		if distanceToLeader > 6.5 then
-			destinationPos = leaderRoot.Position
-			local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
-			local flatLeader = Vector3.new(leaderRoot.Position.X, 0, leaderRoot.Position.Z)
-			moveDirection = (flatLeader - flatChar).Unit
-		else
-			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
-			local lookTarget = Vector3.new(leaderRoot.Position.X, rootPart.Position.Y, leaderRoot.Position.Z)
-			rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 10 * deltaTime)
-			
-			-- Si se detiene frente al líder, frenamos los pasos a velocidad normal
-			local animator = humanoid:FindFirstChildOfClass("Animator")
-			if animator then
-				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-					track:AdjustSpeed(1)
-				end
-			end
-			return
-		end
-		
-	-- PATRULLA DE ACECHO ESTÁNDAR
-	else
-		if isResting then
-			restTimer = restTimer - deltaTime
-			if restTimer <= 0 then
-				isResting = false
-				targetPosition = calculateSmartLurkerPath() 
-			end
-			
-			-- Si está quieto esperando, frenamos los pasos a velocidad normal
-			local animator = humanoid:FindFirstChildOfClass("Animator")
-			if animator then
-				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-					track:AdjustSpeed(1)
-				end
-			end
-			return
-		end
-		
-		local flatCharacterPos = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
-		local flatTargetPos = Vector3.new(targetPosition.X, 0, targetPosition.Z)
-		local distance = (flatCharacterPos - flatTargetPos).Magnitude
-		
-		if distance > 3.5 then
-			destinationPos = targetPosition
-			moveDirection = (flatTargetPos - flatCharacterPos).Unit
-		else
-			-- =========================================================================
-			-- CRONÓMETRO ALEATORIO ESTILO ENTIDAD (NUEVO)
-			-- =========================================================================
-			isResting = true
-			
-			-- math.random(0, 100) / 10 genera decimales exactos entre 0.0 y 10.0 segundos
-			-- Así puede pararse 1.2 segundos, 5.7 segundos, 0.4 segundos o hasta 10 segundos completos.
-			restTimer = math.random(0, 100) / 10 
-			
-			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
-			print("[AI] Destino alcanzado. Esperando por: " .. string.format("%.1f", restTimer) .. " segundos antes de patrullar.")
-			return
-		end
+	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then 
+		applyProceduralWalk(0, false)
+		return 
 	end
 	
-	-- Traslación física final en el mapa
-	if destinationPos and moveDirection.Magnitude > 0 then
+	local currentSpeed = 7.2
+	local moveDirection = Vector3.new()
+	local isCurrentlyMoving = false
+	
+	if isResting then
+		restTimer = restTimer - deltaTime
+		statusLabel.Text = "Prowling Pause: " .. string.format("%.1f", restTimer) .. "s"
+		statusLabel.TextColor3 = Color3.fromRGB(240, 200, 80)
+		if restTimer <= 0 then
+			isResting = false
+			targetPosition = calculateSmartLurkerPath()
+		end
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+		applyProceduralWalk(0, false) -- Quieto
+		return
+	end
+	
+	local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+	local flatTarget = Vector3.new(targetPosition.X, 0, targetPosition.Z)
+	local distance = (flatChar - flatTarget).Magnitude
+	
+	if distance > 3.5 then
+		moveDirection = (flatTarget - flatChar).Unit
+		isCurrentlyMoving = true
+		statusLabel.Text = "Sweeping Corridors..."
+		statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+	else
+		isResting = true
+		restTimer = math.random(15, 50) / 10
+		return
+	end
+	
+	-- Traslación física e inyección de animación procedural
+	if isCurrentlyMoving and moveDirection.Magnitude > 0 then
+		animTime = animTime + deltaTime
+		applyProceduralWalk(animTime, true) -- EJECUTAR CAMINATA MATEMÁTICA
+		
 		local nextPosition = rootPart.Position + moveDirection * (currentSpeed * deltaTime)
 		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 14 * deltaTime).Unit
 		rootPart.CFrame = CFrame.lookAt(nextPosition, rootPart.Position + currentVisualHeading)
 		
-		pcall(function()
-			humanoid.RootPart.AssemblyLinearVelocity = moveDirection * currentSpeed
-		end)
-		
-		-- =========================================================================
-		-- Legs Movement Speed Testing (Referencing At Gilbert)
-		-- =========================================================================
-		local animator = humanoid:FindFirstChildOfClass("Animator")
-		if animator then
-			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-				if track.Name == "WalkAnim" or track.Name == "RunAnim" or string.find(string.lower(track.Name), "walk") or string.find(string.lower(track.Name), "run") then
-					track:AdjustSpeed(1.5) -- Legs Movement Speed
-				end
-			end
-		end
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = moveDirection * currentSpeed end)
+	else
+		applyProceduralWalk(0, false)
 	end
 end)
 
-humanoid.Died:Connect(function()
-	screenGui:Destroy()
-end)
+humanoid.Died:Connect(function() screenGui:Destroy() end)
