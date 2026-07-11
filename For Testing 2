@@ -1,5 +1,27 @@
+--[[
+    LURKER AUTOPILOT - EDICIÓN GILBERT (MENÚ PREMIUM & DEBUG)
+--]]
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+-- Variables globales de configuración
+getgenv().LurkerAI_Enabled = false
+getgenv().GilbertFootSpeed = 1.7 
+
+-- Remover menús viejos
+if player:WaitForChild("PlayerGui"):FindFirstChild("LurkerControlGui") then
+	player.PlayerGui.LurkerControlGui:Destroy()
+end
+
 -- =========================================================================
--- INTERFAZ GRÁFICA AVANZADA (CON FONDO DE EXAMINATION)
+-- INTERFAZ GRÁFICA AVANZADA (ESTILO EXAMINATION INDUSTRIAL)
 -- =========================================================================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "LurkerControlGui"
@@ -7,7 +29,7 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 230, 0, 210)
+mainFrame.Size = UDim2.new(0, 230, 0, 210) -- Un poquito más ancho y alto para el estado actual
 mainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainFrame.BorderSizePixel = 0
@@ -19,29 +41,9 @@ local uiCorner = Instance.new("UICorner")
 uiCorner.CornerRadius = UDim.new(0, 8)
 uiCorner.Parent = mainFrame
 
--- =========================================================================
--- NUEVA IMAGEN DE FONDO (ASSET ID)
--- =========================================================================
-local backgroundImage = Instance.new("ImageLabel")
-backgroundImage.Name = "MenuBackground"
-backgroundImage.Size = UDim2.new(1, 0, 1, 0)
-backgroundImage.Position = UDim2.new(0, 0, 0, 0)
-backgroundImage.BackgroundTransparency = 1
--- Transformamos el ID de la tienda al formato que Roblox lee dentro del juego
-backgroundImage.Image = "rbxassetid://133110190970004" 
--- 0.75 de transparencia para que el fondo sea sutil y se sigan viendo bien los botones
-backgroundImage.ImageTransparency = 0.75 
-backgroundImage.ScaleType = Enum.ScaleType.Crop -- Ajusta la imagen sin deformarla
-backgroundImage.ZIndex = 0 -- Lo manda al fondo de todo
-backgroundImage.Parent = mainFrame
-
-local backgroundCorner = Instance.new("UICorner")
-backgroundCorner.CornerRadius = UDim.new(0, 8)
-backgroundCorner.Parent = backgroundImage
-
 -- Borde sutil estilo industrial
 local uiStroke = Instance.new("UIStroke")
-uiStroke.Color = Color3.fromRGB(55, 55, 55)
+uiStroke.Color = Color3.fromRGB(45, 45, 45)
 uiStroke.Thickness = 1
 uiStroke.Parent = mainFrame
 
@@ -54,10 +56,9 @@ titleLabel.TextColor3 = Color3.fromRGB(220, 60, 60)
 titleLabel.TextSize = 13
 titleLabel.Font = Enum.Font.Code
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-titleLabel.ZIndex = 2
 titleLabel.Parent = mainFrame
 
--- BOTÓN MINIMIZAR
+-- BOTÓN MINIMIZAR (NUEVO)
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Size = UDim2.new(0, 25, 0, 25)
 minimizeButton.Position = UDim2.new(1, -30, 0, 5)
@@ -66,7 +67,6 @@ minimizeButton.Text = "-"
 minimizeButton.TextColor3 = Color3.fromRGB(150, 150, 150)
 minimizeButton.TextSize = 18
 minimizeButton.Font = Enum.Font.SourceSansBold
-minimizeButton.ZIndex = 2
 minimizeButton.Parent = mainFrame
 
 local isMinimized = false
@@ -76,7 +76,7 @@ minimizeButton.MouseButton1Click:Connect(function()
 	if isMinimized then
 		mainFrame.Size = UDim2.new(0, 230, 0, 35)
 		minimizeButton.Text = "+"
-		backgroundImage.Visible = false
+		-- Ocultar los elementos internos
 		for _, child in ipairs(mainFrame:GetChildren()) do
 			if child ~= titleLabel and child ~= minimizeButton and child ~= uiCorner and child ~= uiStroke then
 				child.Visible = false
@@ -85,11 +85,8 @@ minimizeButton.MouseButton1Click:Connect(function()
 	else
 		mainFrame.Size = originalSize
 		minimizeButton.Text = "-"
-		backgroundImage.Visible = true
 		for _, child in ipairs(mainFrame:GetChildren()) do
-			if child ~= backgroundImage then
-				child.Visible = true
-			end
+			child.Visible = true
 		end
 	end
 end)
@@ -102,7 +99,6 @@ toggleButton.Text = "SISTEMA: APAGADO"
 toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
 toggleButton.TextSize = 13
 toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.ZIndex = 2
 toggleButton.Parent = mainFrame
 
 local buttonCorner = Instance.new("UICorner")
@@ -114,7 +110,7 @@ buttonStroke.Color = Color3.fromRGB(100, 40, 40)
 buttonStroke.Thickness = 1
 buttonStroke.Parent = toggleButton
 
--- MONITOR DE ESTADO EN TIEMPO REAL
+-- MONITOR DE ESTADO EN TIEMPO REAL (NUEVO)
 local statusLabel = Instance.new("TextLabel")
 statusLabel.Size = UDim2.new(0, 190, 0, 25)
 statusLabel.Position = UDim2.new(0, 20, 0, 80)
@@ -123,7 +119,6 @@ statusLabel.Text = "Estado: Inactivo"
 statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
 statusLabel.TextSize = 12
 statusLabel.Font = Enum.Font.SourceSansItalic
-statusLabel.ZIndex = 2
 statusLabel.Parent = mainFrame
 
 local statusCorner = Instance.new("UICorner")
@@ -139,7 +134,6 @@ speedLabel.Text = "Frecuencia de Pasos: " .. string.format("%.1f", getgenv().Gil
 speedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 speedLabel.TextSize = 13
 speedLabel.Font = Enum.Font.SourceSans
-speedLabel.ZIndex = 2
 speedLabel.Parent = mainFrame
 
 local minusButton = Instance.new("TextButton")
@@ -150,7 +144,6 @@ minusButton.Text = "-"
 minusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
 minusButton.TextSize = 18
 minusButton.Font = Enum.Font.SourceSansBold
-minusButton.ZIndex = 2
 minusButton.Parent = mainFrame
 
 local minusCorner = Instance.new("UICorner")
@@ -165,14 +158,13 @@ plusButton.Text = "+"
 plusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
 plusButton.TextSize = 18
 plusButton.Font = Enum.Font.SourceSansBold
-plusButton.ZIndex = 2
 plusButton.Parent = mainFrame
 
 local plusCorner = Instance.new("UICorner")
 plusCorner.CornerRadius = UDim.new(0, 4)
 plusCorner.Parent = plusButton
 
--- Animaciones Hover
+-- Efectos Hover sencillos y funciones de botones
 minusButton.MouseEnter:Connect(function() minusButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40) end)
 minusButton.MouseLeave:Connect(function() minusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28) end)
 plusButton.MouseEnter:Connect(function() plusButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40) end)
@@ -187,7 +179,7 @@ end)
 
 plusButton.MouseButton1Click:Connect(function()
 	if getgenv().GilbertFootSpeed < 5.0 then
-		getgenv().GilbertFootSpeed = math.min(5.0, getgenv().GilbertFootSpeed - 0.1)
+		getgenv().GilbertFootSpeed = math.min(5.0, getgenv().GilbertFootSpeed + 0.1)
 		speedLabel.Text = "Frecuencia de Pasos: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
 	end
 end)
@@ -209,4 +201,203 @@ toggleButton.MouseButton1Click:Connect(function()
 		statusLabel.Text = "Estado: Inactivo"
 		statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
 	end
+end)
+
+-- Variables del motor de movimiento estable
+local targetPosition = rootPart.Position
+local isResting = false
+local restTimer = 0
+local currentVisualHeading = rootPart.CFrame.LookVector
+
+-- Variables del sistema de comandos de voz Z
+local leaderCharacter = nil      
+local lastLeaderMoveTime = 0     
+local leaderLastPos = Vector3.new()
+local voiceCommandRange = 45     
+
+local lastVisitedPosition = rootPart.Position
+
+-- Oyente del Chat
+local function setupVoiceCommandListener(otherPlayer)
+	otherPlayer.Chatted:Connect(function(message)
+		if not getgenv().LurkerAI_Enabled or otherPlayer == player then return end 
+		local otherChar = otherPlayer.Character
+		if not otherChar or not otherChar:FindFirstChild("HumanoidRootPart") then return end
+		
+		local distanceToSpeaker = (rootPart.Position - otherChar.HumanoidRootPart.Position).Magnitude
+		if distanceToSpeaker <= voiceCommandRange then
+			if message == "Follow Me!" or message == "Follow me!" or message == "Sígueme!" or message == "Sigueme!" then
+				leaderCharacter = otherChar
+				leaderLastPos = otherChar.HumanoidRootPart.Position
+				lastLeaderMoveTime = os.clock()
+				isResting = false
+			end
+		end
+	end)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do setupVoiceCommandListener(p) end
+Players.PlayerAdded:Connect(setupVoiceCommandListener)
+
+-- ESCÁNER DE PASILLOS
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function calculateSmartLurkerPath()
+	rayParams.FilterDescendantsInstances = {character}
+	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
+	
+	local validOptions = {} 
+	local backupOptions = {}
+	
+	for i = 1, 12 do
+		local angle = math.rad(i * (360 / 12))
+		local distance = math.random(45, 80) 
+		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
+		
+		local rayLow = Workspace:Raycast(origin - Vector3.new(0,0.6,0), direction * distance, rayParams)
+		local rayHigh = Workspace:Raycast(origin + Vector3.new(0,0.5,0), direction * distance, rayParams)
+		local effectiveDistance = math.min(rayLow and (rayLow.Position - rootPart.Position).Magnitude or distance, rayHigh and (rayHigh.Position - rootPart.Position).Magnitude or distance)
+		
+		if effectiveDistance < 4.5 then humanoid.Jump = true end
+		
+		if effectiveDistance > 15 then
+			local potentialPoint = rootPart.Position + direction * (effectiveDistance - 5)
+			local isReturnPath = (potentialPoint - lastVisitedPosition).Magnitude < 25
+			
+			if not isReturnPath then
+				table.insert(validOptions, potentialPoint)
+			else
+				table.insert(backupOptions, potentialPoint)
+			end
+		end
+	end
+	
+	local selectedPoint = nil
+	if #validOptions > 0 then
+		selectedPoint = validOptions[math.random(1, #validOptions)]
+	elseif #backupOptions > 0 then
+		selectedPoint = backupOptions[math.random(1, #backupOptions)]
+	else
+		local randomAngle = math.rad(math.random(0, 360))
+		selectedPoint = rootPart.Position + Vector3.new(math.cos(randomAngle) * 20, 0, math.sin(randomAngle) * 20)
+	end
+	
+	lastVisitedPosition = rootPart.Position
+	return selectedPoint
+end
+
+-- MOTOR DE MOVIMIENTO CON DEBUG VISUAL
+RunService.Heartbeat:Connect(function(deltaTime)
+	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
+	
+	local currentSpeed = 7.2 
+	local moveDirection = Vector3.new()
+	local destinationPos = nil
+	
+	-- ESCORTANDO A JUGADOR
+	if leaderCharacter and leaderCharacter:FindFirstChild("HumanoidRootPart") and leaderCharacter:FindFirstChild("Humanoid") and leaderCharacter.Humanoid.Health > 0 then
+		local leaderRoot = leaderCharacter.HumanoidRootPart
+		local distanceToLeader = (rootPart.Position - leaderRoot.Position).Magnitude
+		
+		statusLabel.Text = "Siguiendo a Líder (" .. string.format("%d", distanceToLeader) .. "m)"
+		statusLabel.TextColor3 = Color3.fromRGB(100, 180, 255)
+
+		if (leaderRoot.Position - leaderLastPos).Magnitude > 1.5 then
+			leaderLastPos = leaderRoot.Position
+			lastLeaderMoveTime = os.clock() 
+		end
+		
+		if (os.clock() - lastLeaderMoveTime) > 15 then
+			leaderCharacter = nil
+			targetPosition = calculateSmartLurkerPath()
+			return
+		end
+		
+		if distanceToLeader > 25 then currentSpeed = 15 end
+		
+		if distanceToLeader > 6.5 then
+			destinationPos = leaderRoot.Position
+			local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+			local flatLeader = Vector3.new(leaderRoot.Position.X, 0, leaderRoot.Position.Z)
+			moveDirection = (flatLeader - flatChar).Unit
+		else
+			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+			local lookTarget = Vector3.new(leaderRoot.Position.X, rootPart.Position.Y, leaderRoot.Position.Z)
+			rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 10 * deltaTime)
+			
+			local animator = humanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+					track:AdjustSpeed(1)
+				end
+			end
+			statusLabel.Text = "Esperando órdenes del Líder"
+			return
+		end
+		
+	-- PATRULLA DE ACECHO ESTÁNDAR
+	else
+		if isResting then
+			restTimer = restTimer - deltaTime
+			
+			-- Mostrar la cuenta regresiva en el menú en vivo
+			statusLabel.Text = "Esperando... " .. string.format("%.1f", restTimer) .. "s"
+			statusLabel.TextColor3 = Color3.fromRGB(240, 200, 80)
+
+			if restTimer <= 0 then
+				isResting = false
+				targetPosition = calculateSmartLurkerPath() 
+			end
+			
+			local animator = humanoid:FindFirstChildOfClass("Animator")
+			if animator then
+				for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+					track:AdjustSpeed(1)
+				end
+			end
+			return
+		end
+		
+		local flatCharacterPos = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+		local flatTargetPos = Vector3.new(targetPosition.X, 0, targetPosition.Z)
+		local distance = (flatCharacterPos - flatTargetPos).Magnitude
+		
+		if distance > 3.5 then
+			destinationPos = targetPosition
+			moveDirection = (flatTargetPos - flatCharacterPos).Unit
+			
+			statusLabel.Text = "Patrullando Pasillos..."
+			statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+		else
+			isResting = true
+			restTimer = math.random(0, 100) / 10 
+			pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+			return
+		end
+	end
+	
+	-- Traslación física final
+	if destinationPos and moveDirection.Magnitude > 0 then
+		local nextPosition = rootPart.Position + moveDirection * (currentSpeed * deltaTime)
+		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 14 * deltaTime).Unit
+		rootPart.CFrame = CFrame.lookAt(nextPosition, rootPart.Position + currentVisualHeading)
+		
+		pcall(function()
+			humanoid.RootPart.AssemblyLinearVelocity = moveDirection * currentSpeed
+		end)
+		
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+				if track.Name == "WalkAnim" or track.Name == "RunAnim" or string.find(string.lower(track.Name), "walk") or string.find(string.lower(track.Name), "run") then
+					track:AdjustSpeed(getgenv().GilbertFootSpeed)
+				end
+			end
+		end
+	end
+end)
+
+humanoid.Died:Connect(function()
+	screenGui:Destroy()
 end)
