@@ -1,5 +1,5 @@
 --[[
-    LURKER AUTOPILOT - EDICIÓN GILBERT (MENÚ PREMIUM & DEBUG)
+    LURKER AUTOPILOT - EDICIÓN GILBERT (MENÚ PREMIUM & DEBUG - CORREGIDO)
 --]]
 
 local Players = game:GetService("Players")
@@ -29,7 +29,7 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 230, 0, 210) -- Un poquito más ancho y alto para el estado actual
+mainFrame.Size = UDim2.new(0, 230, 0, 210)
 mainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainFrame.BorderSizePixel = 0
@@ -58,7 +58,90 @@ titleLabel.Font = Enum.Font.Code
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = mainFrame
 
--- BOTÓN MINIMIZAR (NUEVO)
+-- =========================================================================
+-- CONTENEDOR SEGURO DE ELEMENTOS (NUEVO: EVITA QUE LAS OPCIONES DESAPAREZCAN)
+-- =========================================================================
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -35)
+contentFrame.Position = UDim2.new(0, 0, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 190, 0, 35)
+toggleButton.Position = UDim2.new(0, 20, 0, 5) -- Ajustado al contenedor
+toggleButton.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
+toggleButton.Text = "SISTEMA: APAGADO"
+toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
+toggleButton.TextSize = 13
+toggleButton.Font = Enum.Font.SourceSansBold
+toggleButton.Parent = contentFrame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 5)
+buttonCorner.Parent = toggleButton
+
+local buttonStroke = Instance.new("UIStroke")
+buttonStroke.Color = Color3.fromRGB(100, 40, 40)
+buttonStroke.Thickness = 1
+buttonStroke.Parent = toggleButton
+
+-- MONITOR DE ESTADO EN TIEMPO REAL
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0, 190, 0, 25)
+statusLabel.Position = UDim2.new(0, 20, 0, 45) -- Ajustado al contenedor
+statusLabel.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+statusLabel.Text = "Estado: Inactivo"
+statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.SourceSansItalic
+statusLabel.Parent = contentFrame
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 4)
+statusCorner.Parent = statusLabel
+
+-- CONTROL DE PASOS
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(1, 0, 0, 25)
+speedLabel.Position = UDim2.new(0, 0, 0, 80) -- Ajustado al contenedor
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Frecuencia de Pasos: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+speedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+speedLabel.TextSize = 13
+speedLabel.Font = Enum.Font.SourceSans
+speedLabel.Parent = contentFrame
+
+local minusButton = Instance.new("TextButton")
+minusButton.Size = UDim2.new(0, 45, 0, 30)
+minusButton.Position = UDim2.new(0, 45, 0, 110) -- Ajustado al contenedor
+minusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+minusButton.Text = "-"
+minusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+minusButton.TextSize = 18
+minusButton.Font = Enum.Font.SourceSansBold
+minusButton.Parent = contentFrame
+
+local minusCorner = Instance.new("UICorner")
+minusCorner.CornerRadius = UDim.new(0, 4)
+minusCorner.Parent = minusButton
+
+local plusButton = Instance.new("TextButton")
+plusButton.Size = UDim2.new(0, 45, 0, 30)
+plusButton.Position = UDim2.new(0, 140, 0, 110) -- Ajustado al contenedor
+plusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+plusButton.Text = "+"
+plusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+plusButton.TextSize = 18
+plusButton.Font = Enum.Font.SourceSansBold
+plusButton.Parent = contentFrame
+
+local plusCorner = Instance.new("UICorner")
+plusCorner.CornerRadius = UDim.new(0, 4)
+plusCorner.Parent = plusButton
+
+-- BOTÓN MINIMIZAR BLINDADO
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Size = UDim2.new(0, 25, 0, 25)
 minimizeButton.Position = UDim2.new(1, -30, 0, 5)
@@ -70,99 +153,18 @@ minimizeButton.Font = Enum.Font.SourceSansBold
 minimizeButton.Parent = mainFrame
 
 local isMinimized = false
-local originalSize = mainFrame.Size
 minimizeButton.MouseButton1Click:Connect(function()
 	isMinimized = not isMinimized
 	if isMinimized then
 		mainFrame.Size = UDim2.new(0, 230, 0, 35)
 		minimizeButton.Text = "+"
-		-- Ocultar los elementos internos
-		for _, child in ipairs(mainFrame:GetChildren()) do
-			if child ~= titleLabel and child ~= minimizeButton and child ~= uiCorner and child ~= uiStroke then
-				child.Visible = false
-			end
-		end
+		contentFrame.Visible = false -- Oculta todo el bloque limpio de un solo golpe
 	else
-		mainFrame.Size = originalSize
+		mainFrame.Size = UDim2.new(0, 230, 0, 210)
 		minimizeButton.Text = "-"
-		for _, child in ipairs(mainFrame:GetChildren()) do
-			child.Visible = true
-		end
+		contentFrame.Visible = true -- Muestra todo conservando sus posiciones intactas
 	end
 end)
-
-local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0, 190, 0, 35)
-toggleButton.Position = UDim2.new(0, 20, 0, 40)
-toggleButton.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
-toggleButton.Text = "SISTEMA: APAGADO"
-toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
-toggleButton.TextSize = 13
-toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.Parent = mainFrame
-
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 5)
-buttonCorner.Parent = toggleButton
-
-local buttonStroke = Instance.new("UIStroke")
-buttonStroke.Color = Color3.fromRGB(100, 40, 40)
-buttonStroke.Thickness = 1
-buttonStroke.Parent = toggleButton
-
--- MONITOR DE ESTADO EN TIEMPO REAL (NUEVO)
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 190, 0, 25)
-statusLabel.Position = UDim2.new(0, 20, 0, 80)
-statusLabel.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
-statusLabel.Text = "Estado: Inactivo"
-statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
-statusLabel.TextSize = 12
-statusLabel.Font = Enum.Font.SourceSansItalic
-statusLabel.Parent = mainFrame
-
-local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 4)
-statusCorner.Parent = statusLabel
-
--- CONTROL DE PASOS
-local speedLabel = Instance.new("TextLabel")
-speedLabel.Size = UDim2.new(1, 0, 0, 25)
-speedLabel.Position = UDim2.new(0, 0, 0, 115)
-speedLabel.BackgroundTransparency = 1
-speedLabel.Text = "Frecuencia de Pasos: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
-speedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-speedLabel.TextSize = 13
-speedLabel.Font = Enum.Font.SourceSans
-speedLabel.Parent = mainFrame
-
-local minusButton = Instance.new("TextButton")
-minusButton.Size = UDim2.new(0, 45, 0, 30)
-minusButton.Position = UDim2.new(0, 45, 0, 145)
-minusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
-minusButton.Text = "-"
-minusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
-minusButton.TextSize = 18
-minusButton.Font = Enum.Font.SourceSansBold
-minusButton.Parent = mainFrame
-
-local minusCorner = Instance.new("UICorner")
-minusCorner.CornerRadius = UDim.new(0, 4)
-minusCorner.Parent = minusButton
-
-local plusButton = Instance.new("TextButton")
-plusButton.Size = UDim2.new(0, 45, 0, 30)
-plusButton.Position = UDim2.new(0, 140, 0, 145)
-plusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
-plusButton.Text = "+"
-plusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
-plusButton.TextSize = 18
-plusButton.Font = Enum.Font.SourceSansBold
-plusButton.Parent = mainFrame
-
-local plusCorner = Instance.new("UICorner")
-plusCorner.CornerRadius = UDim.new(0, 4)
-plusCorner.Parent = plusButton
 
 -- Efectos Hover sencillos y funciones de botones
 minusButton.MouseEnter:Connect(function() minusButton.BackgroundColor3 = Color3.fromRGB(40, 40, 40) end)
@@ -203,7 +205,7 @@ toggleButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Variables del motor de movimiento estable
+-- Variables del motor de movimiento stable
 local targetPosition = rootPart.Position
 local isResting = false
 local restTimer = 0
