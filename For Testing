@@ -1,6 +1,6 @@
 --[[
-    LURKER AUTOPILOT - EXPERIMENTAL PROCEDURAL ANIMATION TEST
-    All interface in English. Math-based walking animation built-in.
+    LURKER AUTOPILOT - EXPERIMENTAL COMBAT ENGINE TEST (WITH LINE OF SIGHT)
+    All interface in English. Real-time periodic entity targeting system with LoS.
 --]]
 
 local Players = game:GetService("Players")
@@ -51,7 +51,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -40, 0, 35)
 titleLabel.Position = UDim2.new(0, 10, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "GILBERT ANIM TEST"
+titleLabel.Text = "GILBERT COMBAT TEST"
 titleLabel.TextColor3 = Color3.fromRGB(220, 60, 60)
 titleLabel.TextSize = 13
 titleLabel.Font = Enum.Font.Code
@@ -102,7 +102,7 @@ local speedLabel = Instance.new("TextLabel")
 speedLabel.Size = UDim2.new(1, 0, 0, 25)
 speedLabel.Position = UDim2.new(0, 0, 0, 80)
 speedLabel.BackgroundTransparency = 1
-speedLabel.Text = "Anim Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+speedLabel.Text = "Footstep Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
 speedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
 speedLabel.TextSize = 13
 speedLabel.Font = Enum.Font.SourceSans
@@ -163,61 +163,19 @@ end)
 minusButton.MouseButton1Click:Connect(function()
 	if getgenv().GilbertFootSpeed > 0.5 then
 		getgenv().GilbertFootSpeed = math.max(0.5, getgenv().GilbertFootSpeed - 0.1)
-		speedLabel.Text = "Anim Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+		speedLabel.Text = "Footstep Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
 	end
 end)
 
 plusButton.MouseButton1Click:Connect(function()
 	if getgenv().GilbertFootSpeed < 5.0 then
 		getgenv().GilbertFootSpeed = math.min(5.0, getgenv().GilbertFootSpeed + 0.1)
-		speedLabel.Text = "Anim Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+		speedLabel.Text = "Footstep Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
 	end
 end)
 
 -- =========================================================================
--- MOTOR DE ANIMACIÓN PROCEDURAL (MATEMÁTICA INTEGRADA)
--- =========================================================================
-local function getMotor6D(partName, motorName)
-	local p = character:FindFirstChild(partName)
-	if p then return p:FindFirstChild(motorName) end
-	return nil
-end
-
-local function applyProceduralWalk(angleTime, isMovingFlag)
-	-- Intentar mapear motores R15 comunes
-	local joints = {
-		LeftHip = getMotor6D("LeftUpperLeg", "LeftHip") or getMotor6D("Torso", "Left Hip"),
-		RightHip = getMotor6D("RightUpperLeg", "RightHip") or getMotor6D("Torso", "Right Hip"),
-		LeftShoulder = getMotor6D("LeftUpperArm", "LeftShoulder") or getMotor6D("Torso", "Left Shoulder"),
-		RightShoulder = getMotor6D("RightUpperArm", "RightShoulder") or getMotor6D("Torso", "Right Shoulder"),
-		LowerTorso = getMotor6D("LowerTorso", "Root") or getMotor6D("HumanoidRootPart", "RootJoint")
-	}
-
-	if isMovingFlag then
-		-- Frecuencia base multiplicada por la velocidad del menú
-		local speedMultiplier = 8 * getgenv().GilbertFootSpeed
-		local t = angleTime * speedMultiplier
-		
-		-- Calcular ondas Seno / Coseno para simular balanceo orgánico
-		local limbWave = math.sin(t) * 0.45 
-		local bodyBob = math.abs(math.sin(t)) * 0.15 -- El torso baja y sube levemente
-		
-		-- Aplicar rotaciones angulares cruzadas (brazo izquierdo adelante -> pierna derecha adelante)
-		if joints.LeftHip then joints.LeftHip.Transform = CFrame.Angles(limbWave, 0, 0) end
-		if joints.RightHip then joints.RightHip.Transform = CFrame.Angles(-limbWave, 0, 0) end
-		if joints.LeftShoulder then joints.LeftShoulder.Transform = CFrame.Angles(-limbWave * 0.8, 0, math.rad(-5)) end
-		if joints.RightShoulder then joints.RightShoulder.Transform = CFrame.Angles(limbWave * 0.8, 0, math.rad(5)) end
-		if joints.LowerTorso then joints.LowerTorso.Transform = CFrame.new(0, -bodyBob, 0) * CFrame.Angles(0, math.sin(t)*0.05, 0) end
-	else
-		-- Resetear extremidades a posición neutral si se detiene
-		for _, joint in pairs(joints) do
-			if joint then joint.Transform = CFrame.new() end
-		end
-	end
-end
-
--- =========================================================================
--- CONTROL LOGIC & AUTOPILOT ENGINE
+-- GLOBAL SYSTEM MOTOR VARIABLES
 -- =========================================================================
 local targetPosition = rootPart.Position
 local isResting = false
@@ -225,8 +183,88 @@ local restTimer = 0
 local currentVisualHeading = rootPart.CFrame.LookVector
 local lastVisitedPosition = rootPart.Position
 
+-- Intelligence Combat Parameters
+local currentEnemyTarget = nil
+local combatRange = 60 -- Maximum entity detection radius (studs)
+local lastShootTime = 0
+local shootCooldown = 0.5 -- Cooldown firing rate (seconds)
+
 local calculateSmartLurkerPath
 
+-- =========================================================================
+-- AUTOMATIC COMBAT ENGINE (WITH LINE OF SIGHT FILTERS)
+-- =========================================================================
+local function drawLaserBeam(from, to)
+	local distance = (from - to).Magnitude
+	local laser = Instance.new("Part")
+	laser.Name = "GilbertLaserEffect"
+	laser.Anchored = true
+	laser.CanCollide = false
+	laser.Color = Color3.fromRGB(255, 0, 0) -- Bright Red debug laser
+	laser.Material = Enum.Material.Neon
+	laser.Size = Vector3.new(0.15, 0.15, distance)
+	laser.CFrame = CFrame.lookAt(from, to) * CFrame.new(0, 0, -distance / 2)
+	laser.Parent = Workspace
+	game:GetService("Debris"):AddItem(laser, 0.08) -- Instantly removed from cache
+end
+
+-- Optimized Loop: Runs 3 times per second to check Line of Sight without lag
+task.spawn(function()
+	while true do
+		task.wait(0.33)
+		if getgenv().LurkerAI_Enabled and character and character:FindFirstChild("HumanoidRootPart") then
+			local closestEnemy = nil
+			local shortestDistance = combatRange
+			local originPoint = rootPart.Position + Vector3.new(0, 0.5, 0) -- Bot's field of view origin
+			
+			-- Setup physical visibility parameters
+			local losParams = RaycastParams.new()
+			losParams.FilterType = Enum.RaycastFilterType.Exclude
+			
+			-- Exclude bot and other online players from blocking the sight raycast
+			local ignoreList = {character}
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p.Character then table.insert(ignoreList, p.Character) end
+			end
+			losParams.FilterDescendantsInstances = ignoreList
+			
+			-- Search for valid targets across Workspace
+			for _, desc in ipairs(Workspace:GetDescendants()) do
+				if desc:IsA("Humanoid") and desc.Parent and desc.Parent ~= character then
+					local enemyRoot = desc.Parent:FindFirstChild("HumanoidRootPart") or desc.Parent:FindFirstChild("Torso")
+					if enemyRoot and desc.Health > 0 then
+						
+						-- Rule 1: Must NOT be a real player
+						local isAPlayer = Players:GetPlayerFromCharacter(desc.Parent)
+						if not isAPlayer then
+							local targetPos = enemyRoot.Position
+							local dist = (rootPart.Position - targetPos).Magnitude
+							
+							-- Rule 2: If within distance, execute the Line of Sight check
+							if dist < shortestDistance then
+								local direction = (targetPos - originPoint)
+								local losRay = Workspace:Raycast(originPoint, direction, losParams)
+								
+								-- Target acquired only if ray is clean or directly intersects the target model
+								if not losRay or losRay.Instance:IsDescendantOf(desc.Parent) then
+									shortestDistance = dist
+									closestEnemy = enemyRoot
+								end
+							end
+						end
+					end
+				end
+			end
+			currentEnemyTarget = closestEnemy
+		else
+			currentEnemyTarget = nil
+		end
+	end
+end)
+
+-- =========================================================================
+-- MAIN SYSTEM TOGGLE HANDLER
+-- =========================================================================
 toggleButton.MouseButton1Click:Connect(function()
 	getgenv().LurkerAI_Enabled = not getgenv().LurkerAI_Enabled
 	if getgenv().LurkerAI_Enabled then
@@ -240,6 +278,7 @@ toggleButton.MouseButton1Click:Connect(function()
 		targetPosition = rootPart.Position
 		lastVisitedPosition = rootPart.Position
 		isResting = false
+		currentEnemyTarget = nil
 		
 		task.spawn(function()
 			task.wait(0.1)
@@ -253,11 +292,14 @@ toggleButton.MouseButton1Click:Connect(function()
 		statusLabel.Text = "Status: Idle"
 		statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
 		isResting = false
+		currentEnemyTarget = nil
 		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
-		applyProceduralWalk(0, false) -- Apagar animación
 	end
 end)
 
+-- =========================================================================
+-- PATHFINDING RAYCAST MOTOR
+-- =========================================================================
 calculateSmartLurkerPath = function()
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude
@@ -277,15 +319,39 @@ calculateSmartLurkerPath = function()
 	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or rootPart.Position
 end
 
--- HEARTBEAT EXECUTION LOOP
-local animTime = 0
-
+-- =========================================================================
+-- MAIN HEARTBEAT EXECUTION LOOP
+-- =========================================================================
 RunService.Heartbeat:Connect(function(deltaTime)
-	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then 
-		applyProceduralWalk(0, false)
-		return 
+	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then return end
+	
+	-- PRIORITY 1: COMBAT MODE ACTIVATED (TARGET VISIBLE AND LOCKED)
+	if currentEnemyTarget and currentEnemyTarget.Parent and currentEnemyTarget.Parent:FindFirstChild("Humanoid") and currentEnemyTarget.Parent.Humanoid.Health > 0 then
+		-- Lock physics velocity instantly to prevent sliding while firing
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+		
+		local enemyPos = currentEnemyTarget.Position
+		statusLabel.Text = "TARGET ENGAGED: " .. string.upper(currentEnemyTarget.Parent.Name)
+		statusLabel.TextColor3 = Color3.fromRGB(255, 60, 60)
+		
+		-- Smoothly look at the target in real time
+		local lookTarget = Vector3.new(enemyPos.X, rootPart.Position.Y, enemyPos.Z)
+		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 15 * deltaTime)
+		
+		-- Process shooting frequency
+		if os.clock() - lastShootTime >= shootCooldown then
+			lastShootTime = os.clock()
+			
+			local originPoint = rootPart.Position + Vector3.new(0, 0.5, 0)
+			drawLaserBeam(originPoint, enemyPos)
+			
+			-- REAL DAMAGE IMPLEMENTATION NOTE:
+			-- You could invoke a RemoteEvent here to deal actual game damage if needed.
+		end
+		return -- Interrupts normal path patrol loop while targets are handled
 	end
 	
+	-- PRIORITY 2: STANDARD CORRIDOR PROWLING PATROL
 	local currentSpeed = 7.2
 	local moveDirection = Vector3.new()
 	local isCurrentlyMoving = false
@@ -299,7 +365,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			targetPosition = calculateSmartLurkerPath()
 		end
 		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
-		applyProceduralWalk(0, false) -- Quieto
 		return
 	end
 	
@@ -318,18 +383,22 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return
 	end
 	
-	-- Traslación física e inyección de animación procedural
+	-- Physical translation logic execution
 	if isCurrentlyMoving and moveDirection.Magnitude > 0 then
-		animTime = animTime + deltaTime
-		applyProceduralWalk(animTime, true) -- EJECUTAR CAMINATA MATEMÁTICA
-		
 		local nextPosition = rootPart.Position + moveDirection * (currentSpeed * deltaTime)
 		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 14 * deltaTime).Unit
 		rootPart.CFrame = CFrame.lookAt(nextPosition, rootPart.Position + currentVisualHeading)
 		
 		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = moveDirection * currentSpeed end)
-	else
-		applyProceduralWalk(0, false)
+		
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+				if track.Name == "WalkAnim" or track.Name == "RunAnim" or string.find(string.lower(track.Name), "walk") or string.find(string.lower(track.Name), "run") then
+					track:AdjustSpeed(getgenv().GilbertFootSpeed)
+				end
+			end
+		end
 	end
 end)
 
