@@ -1,278 +1,540 @@
--- BOT BEHAVIOR MASTER SYSTEM V5.6: STANDALONE INJECTION CORE
-local Workspace = game:GetService("Workspace")
+-- Ramiréz BOT Behavior V5.3 - INTEGRATED VISUAL CONE EDITION
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 
-local localPlayer = Players.LocalPlayer
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
 
--- CONFIGURACIÓN DE PARÁMETROS DEL BOT
-local BotSettings = {
-	PatrolNodes = {},        
-	AcceptanceRadius = 4,    
-	ViewDistance = 60,       
-	FieldOfView = 90,        
-	CheckRate = 0.1,         
+getgenv().LurkerAI_Enabled = false
+getgenv().GilbertFootSpeed = 1.7 
+
+if player:WaitForChild("PlayerGui"):FindFirstChild("LurkerControlGui") then
+	player.PlayerGui.LurkerControlGui:Destroy()
+end
+
+-- PARÁMETROS AGREGADOS PARA EL CONO VISUAL (INTEGRACIÓN SEGURO ANTI-LAG)
+local VisualConfig = {
+	FieldOfView = 90,        -- Amplitud del cono de visión frontal en grados
+	ViewDistance = 30,       -- Sincronizado perfectamente con tu combatScanRange (30 studs)
 }
 
--- =============================================================================
--- DETECCIÓN TOTALMENTE DINÁMICA DEL BOT (SIN USAR SCRIPT.PARENT)
--- =============================================================================
-local function getBotCharacter()
-	-- 1. Intentar buscarlo directamente por el nombre que vimos en tus capturas
-	local namedBot = Workspace:FindFirstChild("VILIANOV_KRAVCHENKO")
-	if namedBot then return namedBot end
-	
-	-- 2. Si no lo encuentra por nombre, busca cualquier modelo en Workspace que tenga un Humanoid y NO sea un jugador real
-	for _, obj in ipairs(Workspace:GetChildren()) do
-		if obj:IsA("Model") and obj:FindFirstChildOfClass("Humanoid") then
-			if not Players:GetPlayerFromCharacter(obj) and obj ~= localPlayer.Character then
-				return obj -- Encontró un NPC/Dummy de pruebas
-			end
-		end
-	end
-	
-	return nil
-end
+local targetPosition = rootPart.Position
+local isResting = false
+local restTimer = 0
+local currentVisualHeading = rootPart.CFrame.LookVector
+local dangerousZones = {} 
 
--- VARIABLES DE ESTADO GLOBALES
-getgenv().BotMaster_SystemActive = false
-getgenv().BotMaster_VisualActive = false
+local currentEnemyTarget = nil
+local combatScanRange = 30 
+local attackTriggerRange = 9 
+local lastMeleeStrikeTime = 0
+local meleeCooldown = 2.4 
+local internalManualHandover = false 
 
-local BotStates = { PATROL = "Patrol", CHASE = "Chase" }
-local currentBotState = BotStates.PATROL
-local currentNodeIndex = 1
-local currentTarget = nil
+-- Control de estado para recalculación post-override
+local overrideActive = false
 
-if localPlayer:WaitForChild("PlayerGui"):FindFirstChild("BotControlMasterGui") then
-	localPlayer.PlayerGui.BotControlMasterGui:Destroy()
+local function isPlayerMovingInput()
+	local moveDirection = humanoid.MoveDirection
+	return moveDirection.Magnitude > 0.1
 end
 
 -- =============================================================================
--- LOGICA CORE RE-ESTRUCTURADA (SEGURA ANTE INJECCIÓN)
+-- FUNCIÓN AGREGADA: FILTRO MATEMÁTICO DE CONO VISUAL (RAYCAST CONE)
 -- =============================================================================
-local function checkVisualCone(targetPart, botChar)
-	local currentHead = botChar:FindFirstChild("Head")
-	if not currentHead then return false end
-	
-	local botToTarget = (targetPart.Position - currentHead.Position)
+local function isTargetInRamirezCone(enemyRoot)
+	local botToTarget = (enemyRoot.Position - rootPart.Position)
 	local distance = botToTarget.Magnitude
 	
-	if distance > BotSettings.ViewDistance then return false end
+	-- 1. Filtro rápido por rango físico
+	if distance > VisualConfig.ViewDistance then return false end
 	
-	local botLookDirection = currentHead.CFrame.LookVector
+	-- 2. Filtro angular mediante Producto Punto (Dot Product)
+	local botLookDirection = rootPart.CFrame.LookVector
 	local directionToTarget = botToTarget.Unit
 	local dotProduct = botLookDirection:Dot(directionToTarget)
 	local angle = math.acos(dotProduct) * (180 / math.pi)
 	
-	if angle <= (BotSettings.FieldOfView / 2) then
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterDescendantsInstances = {botChar}
-		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	-- 3. Si está de frente (dentro de los 45° a cada lado), tiramos la validación de obstrucción
+	if angle <= (VisualConfig.FieldOfView / 2) then
+		local losParams = RaycastParams.new()
+		losParams.FilterType = Enum.RaycastFilterType.Exclude
 		
-		local raycastResult = Workspace:Raycast(currentHead.Position, botToTarget, raycastParams)
-		if raycastResult and raycastResult.Instance:IsDescendantOf(targetPart.Parent) then
-			return true 
+		-- El rayo ignora a los jugadores del servidor pero se detiene en mapas, paredes y props
+		local ignoreList = {character}
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Character then table.insert(ignoreList, p.Character) end
+		end
+		losParams.FilterDescendantsInstances = ignoreList
+		
+		local originPoint = rootPart.Position + Vector3.new(0, 0.5, 0)
+		local direction = (enemyRoot.Position - originPoint)
+		local losRay = Workspace:Raycast(originPoint, direction, losParams)
+		
+		if not losRay or losRay.Instance:IsDescendantOf(enemyRoot.Parent) then
+			return true -- ¡Línea de visión limpia confirmada!
 		end
 	end
+	
 	return false
 end
 
-local function scanTargets(botChar)
-	if not getgenv().BotMaster_VisualActive then return nil end
-	for _, player in ipairs(Players:GetPlayers()) do
-		local char = player.Character
-		if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
-			if char.Humanoid.Health > 0 and player ~= localPlayer then
-				if checkVisualCone(char.HumanoidRootPart, botChar) then
-					return char
-				end
-			end
-		end
-	end
-	return nil
-end
-
-local function executePatrol(botChar)
-	local currentTorso = botChar:FindFirstChild("Torso") or botChar:FindFirstChild("UpperTorso")
-	local currentHumanoid = botChar:FindFirstChildOfClass("Humanoid")
+local function calculateSmartLurkerPath()
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = {character}
+	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
+	local validOptions = {}
 	
-	if not currentTorso or not currentHumanoid then return end
-	
-	if #BotSettings.PatrolNodes == 0 then
-		local basePos = currentTorso.Position
-		BotSettings.PatrolNodes = {
-			basePos + Vector3.new(20, 0, 0),
-			basePos + Vector3.new(20, 0, 20),
-			basePos + Vector3.new(0, 0, 20),
-			basePos + Vector3.new(0, 0, 0)
-		}
-	end
-
-	local targetNodePos = BotSettings.PatrolNodes[currentNodeIndex]
-	if targetNodePos then
-		currentHumanoid:MoveTo(targetNodePos)
-		local distanceToNode = (currentTorso.Position - targetNodePos).Magnitude
-		if distanceToNode <= BotSettings.AcceptanceRadius then
-			currentNodeIndex = currentNodeIndex + 1
-			if currentNodeIndex > #BotSettings.PatrolNodes then
-				currentNodeIndex = 1
-			end
-		end
-	end
-end
-
--- HILO PRINCIPAL ASÍNCRONO
-task.spawn(function()
-	while task.wait(BotSettings.CheckRate) do
-		local botChar = getBotCharacter()
+	for i = 1, 12 do
+		local angle = math.rad(i * 30)
+		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
+		local ray = Workspace:Raycast(origin, direction * 45, rayParams)
+		local dist = ray and (ray.Position - rootPart.Position).Magnitude or 45
 		
-		if botChar then
-			local currentHumanoid = botChar:FindFirstChildOfClass("Humanoid")
+		if dist > 12 then
+			local potentialPoint = rootPart.Position + direction * (dist - 4)
 			
-			if getgenv().BotMaster_SystemActive and currentHumanoid and currentHumanoid.Health > 0 then
-				local detectedTarget = scanTargets(botChar)
-				
-				if detectedTarget then
-					currentTarget = detectedTarget
-					currentBotState = BotStates.CHASE
-				else
-					if currentBotState == BotStates.CHASE then
-						currentTarget = nil
-						currentBotState = BotStates.PATROL
-					end
+			local isSafe = true
+			for dangerPos, _ in pairs(dangerousZones) do
+				if (potentialPoint - dangerPos).Magnitude < 25 then 
+					isSafe = false
+					break
 				end
-				
-				if currentBotState == BotStates.CHASE and currentTarget and currentTarget:FindFirstChild("HumanoidRootPart") then
-					currentHumanoid:MoveTo(currentTarget.HumanoidRootPart.Position)
-				elseif currentBotState == BotStates.PATROL then
-					executePatrol(botChar)
-				end
-			else
-				if currentHumanoid then currentHumanoid:Move(Vector3.new(0,0,0)) end
+			end
+			
+			if isSafe then
+				table.insert(validOptions, potentialPoint)
 			end
 		end
 	end
-end)
+	
+	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or rootPart.Position
+end
 
 -- =============================================================================
--- INTERFAZ GRÁFICA DE OPERACIONES (Panel Táctico)
+-- INTERFAZ GRÁFICA ORIGINAL (DISEÑO BASE CON REGISTRO DE CAMBIOS ACTUALIZADO)
 -- =============================================================================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "BotControlMasterGui"
+screenGui.Name = "LurkerControlGui"
 screenGui.ResetOnSpawn = false
-screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 260, 0, 230)
-mainFrame.Position = UDim2.new(0.7, 0, 0.2, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+mainFrame.Size = UDim2.new(0, 240, 0, 360)
+mainFrame.Position = UDim2.new(0.05, 0, 0.35, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(15, 12, 12)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.Parent = screenGui
 
 local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 6)
+uiCorner.CornerRadius = UDim.new(0, 8)
 uiCorner.Parent = mainFrame
 
 local uiStroke = Instance.new("UIStroke")
-uiStroke.Color = Color3.fromRGB(50, 50, 70)
+uiStroke.Color = Color3.fromRGB(75, 35, 35)
 uiStroke.Thickness = 1
 uiStroke.Parent = mainFrame
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, -10, 0, 35)
+titleLabel.Size = UDim2.new(1, -40, 0, 35)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "BOT BEHAVIOR MANAGER V5.6"
-titleLabel.TextColor3 = Color3.fromRGB(230, 180, 70)
-titleLabel.TextSize = 10
+titleLabel.Text = "Ramiréz BOT Behavior V5.3"
+titleLabel.TextColor3 = Color3.fromRGB(255, 65, 65)
+titleLabel.TextSize = 12
 titleLabel.Font = Enum.Font.Code
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = mainFrame
 
-local coreToggle = Instance.new("TextButton")
-coreToggle.Size = UDim2.new(0, 220, 0, 38)
-coreToggle.Position = UDim2.new(0, 20, 0, 45)
-coreToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-coreToggle.Text = "CORE ENGINE: STANDBY"
-coreToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
-coreToggle.Font = Enum.Font.SourceSansBold
-coreToggle.TextSize = 12
-coreToggle.Parent = mainFrame
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -35)
+contentFrame.Position = UDim2.new(0, 0, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
 
-local cCorner = Instance.new("UICorner")
-cCorner.CornerRadius = UDim.new(0, 4)
-cCorner.Parent = coreToggle
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 200, 0, 35)
+toggleButton.Position = UDim2.new(0, 20, 0, 5)
+toggleButton.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
+toggleButton.Text = "SYSTEM: DISABLED"
+toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
+toggleButton.TextSize = 13
+toggleButton.Font = Enum.Font.SourceSansBold
+toggleButton.Parent = contentFrame
 
-local cStroke = Instance.new("UIStroke")
-cStroke.Color = Color3.fromRGB(60, 60, 80)
-cStroke.Parent = coreToggle
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 5)
+buttonCorner.Parent = toggleButton
 
-local visualToggle = Instance.new("TextButton")
-visualToggle.Size = UDim2.new(0, 220, 0, 38)
-visualToggle.Position = UDim2.new(0, 20, 0, 95)
-visualToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-visualToggle.Text = "VISUAL TRACKER: OFF"
-visualToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
-visualToggle.Font = Enum.Font.SourceSansBold
-visualToggle.TextSize = 12
-visualToggle.Parent = mainFrame
+local buttonStroke = Instance.new("UIStroke")
+buttonStroke.Color = Color3.fromRGB(100, 40, 40)
+buttonStroke.Thickness = 1
+buttonStroke.Parent = toggleButton
 
-local vCorner = Instance.new("UICorner")
-vCorner.CornerRadius = UDim.new(0, 4)
-vCorner.Parent = visualToggle
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0, 200, 0, 25)
+statusLabel.Position = UDim2.new(0, 20, 0, 45)
+statusLabel.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+statusLabel.Text = "Status: Idle"
+statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+statusLabel.TextSize = 12
+statusLabel.Font = Enum.Font.SourceSansItalic
+statusLabel.Parent = contentFrame
 
-local vStroke = Instance.new("UIStroke")
-vStroke.Color = Color3.fromRGB(60, 60, 80)
-vStroke.Parent = visualToggle
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 4)
+statusCorner.Parent = statusLabel
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(1, 0, 0, 25)
+speedLabel.Position = UDim2.new(0, 0, 0, 80)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = "Footstep Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+speedLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+speedLabel.TextSize = 13
+speedLabel.Font = Enum.Font.SourceSans
+speedLabel.Parent = contentFrame
+
+local minusButton = Instance.new("TextButton")
+minusButton.Size = UDim2.new(0, 45, 0, 30)
+minusButton.Position = UDim2.new(0, 50, 0, 110)
+minusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+minusButton.Text = "-"
+minusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+minusButton.TextSize = 18
+minusButton.Font = Enum.Font.SourceSansBold
+minusButton.Parent = contentFrame
+
+local minusCorner = Instance.new("UICorner")
+minusCorner.CornerRadius = UDim.new(0, 4)
+minusCorner.Parent = minusButton
+
+local plusButton = Instance.new("TextButton")
+plusButton.Size = UDim2.new(0, 45, 0, 30)
+plusButton.Position = UDim2.new(0, 145, 0, 110)
+plusButton.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+plusButton.Text = "+"
+plusButton.TextColor3 = Color3.fromRGB(200, 200, 200)
+plusButton.TextSize = 18
+plusButton.Font = Enum.Font.SourceSansBold
+plusButton.Parent = contentFrame
+
+local plusCorner = Instance.new("UICorner")
+plusCorner.CornerRadius = UDim.new(0, 4)
+plusCorner.Parent = plusButton
+
+local updatesHeader = Instance.new("TextLabel")
+updatesHeader.Size = UDim2.new(0, 200, 0, 20)
+updatesHeader.Position = UDim2.new(0, 20, 0, 155)
+updatesHeader.BackgroundTransparency = 1
+updatesHeader.Text = "--- SYSTEM UPDATES ---"
+updatesHeader.TextColor3 = Color3.fromRGB(140, 140, 140)
+updatesHeader.TextSize = 11
+updatesHeader.Font = Enum.Font.Code
+updatesHeader.Parent = contentFrame
+
+local updatesFrame = Instance.new("Frame")
+updatesFrame.Size = UDim2.new(0, 200, 0, 135)
+updatesFrame.Position = UDim2.new(0, 20, 0, 180)
+updatesFrame.BackgroundColor3 = Color3.fromRGB(10, 8, 8)
+updatesFrame.BorderSizePixel = 0
+updatesFrame.Parent = contentFrame
+
+local updatesCorner = Instance.new("UICorner")
+updatesCorner.CornerRadius = UDim.new(0, 4)
+updatesCorner.Parent = updatesFrame
+
+local updatesStroke = Instance.new("UIStroke")
+updatesStroke.Color = Color3.fromRGB(45, 25, 25)
+updatesStroke.Thickness = 1
+updatesStroke.Parent = updatesFrame
 
 local logLabel = Instance.new("TextLabel")
-logLabel.Size = UDim2.new(0, 220, 0, 65)
-logLabel.Position = UDim2.new(0, 20, 0, 145)
-logLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
-logLabel.Text = "SYSTEMS DIAGNOSTIC:\nStandalone Engine loaded. Ready."
-logLabel.TextColor3 = Color3.fromRGB(140, 140, 150)
+logLabel.Size = UDim2.new(1, -12, 1, -10)
+logLabel.Position = UDim2.new(0, 6, 0, 5)
+logLabel.BackgroundTransparency = 1
+logLabel.Text = "[+] CHANGELOG V5.3:\n• Visual Cone (90°): Enemy tracking restricted to actual line of sight.\n• Anti-Lag Cast: Raycasting limits triggers to frontal vector math optimization.\n• Fixed Standalone: Core runs entirely detached from physical script instance hierarchies."
+logLabel.TextColor3 = Color3.fromRGB(165, 150, 150)
 logLabel.TextSize = 11
 logLabel.Font = Enum.Font.Code
 logLabel.TextWrapped = true
-logLabel.Parent = mainFrame
+logLabel.TextYAlignment = Enum.TextYAlignment.Top
+logLabel.TextXAlignment = Enum.TextXAlignment.Left
+logLabel.Parent = updatesFrame
 
-local lCorner = Instance.new("UICorner")
-lCorner.CornerRadius = UDim.new(0, 4)
-lCorner.Parent = logLabel
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Size = UDim2.new(0, 25, 0, 25)
+minimizeButton.Position = UDim2.new(1, -30, 0, 5)
+minimizeButton.BackgroundTransparency = 1
+minimizeButton.Text = "-"
+minimizeButton.TextColor3 = Color3.fromRGB(150, 150, 150)
+minimizeButton.TextSize = 18
+minimizeButton.Font = Enum.Font.SourceSansBold
+minimizeButton.Parent = mainFrame
 
-coreToggle.MouseButton1Click:Connect(function()
-	if getgenv().BotMaster_SystemActive then
-		getgenv().BotMaster_SystemActive = false
-		coreToggle.Text = "CORE ENGINE: STANDBY"
-		coreToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-		coreToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
-		cStroke.Color = Color3.fromRGB(60, 60, 80)
-		logLabel.Text = "SYSTEMS DIAGNOSTIC:\nCore Engine offline. Bot halted."
-		logLabel.TextColor3 = Color3.fromRGB(140, 140, 150)
+local isMinimized = false
+minimizeButton.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		mainFrame.Size = UDim2.new(0, 240, 0, 35)
+		minimizeButton.Text = "+"
+		contentFrame.Visible = false
 	else
-		getgenv().BotMaster_SystemActive = true
-		coreToggle.Text = "CORE ENGINE: RUNNING"
-		coreToggle.BackgroundColor3 = Color3.fromRGB(25, 45, 30)
-		coreToggle.TextColor3 = Color3.fromRGB(100, 230, 100)
-		cStroke.Color = Color3.fromRGB(45, 120, 55)
-		logLabel.Text = "SYSTEMS DIAGNOSTIC:\nCore active. State: PATROL.\nScanning via standalone search..."
-		logLabel.TextColor3 = Color3.fromRGB(110, 210, 110)
+		mainFrame.Size = UDim2.new(0, 240, 0, 360)
+		minimizeButton.Text = "-"
+		contentFrame.Visible = true
 	end
 end)
 
-visualToggle.MouseButton1Click:Connect(function()
-	if getgenv().BotMaster_VisualActive then
-		getgenv().BotMaster_VisualActive = false
-		visualToggle.Text = "VISUAL TRACKER: OFF"
-		visualToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-		visualToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
-		vStroke.Color = Color3.fromRGB(60, 60, 80)
-	else
-		getgenv().BotMaster_VisualActive = true
-		visualToggle.Text = "VISUAL TRACKER: ACTIVE"
-		visualToggle.BackgroundColor3 = Color3.fromRGB(25, 40, 55)
-		visualToggle.TextColor3 = Color3.fromRGB(100, 180, 255)
-		vStroke.Color = Color3.fromRGB(40, 90, 140)
+minusButton.MouseButton1Click:Connect(function()
+	if getgenv().GilbertFootSpeed > 0.5 then
+		getgenv().GilbertFootSpeed = math.max(0.5, getgenv().GilbertFootSpeed - 0.1)
+		speedLabel.Text = "Footstep Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
 	end
 end)
+
+plusButton.MouseButton1Click:Connect(function()
+	if getgenv().GilbertFootSpeed < 5.0 then
+		getgenv().GilbertFootSpeed = math.min(5.0, getgenv().GilbertFootSpeed + 0.1)
+		speedLabel.Text = "Footstep Frequency: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+	end
+end)
+
+local function disableSystemFully()
+	getgenv().LurkerAI_Enabled = false
+	toggleButton.Text = "SYSTEM: DISABLED"
+	toggleButton.BackgroundColor3 = Color3.fromRGB(35, 25, 25)
+	toggleButton.TextColor3 = Color3.fromRGB(200, 100, 100)
+	buttonStroke.Color = Color3.fromRGB(100, 40, 40)
+	isResting = false
+	currentEnemyTarget = nil
+	overrideActive = false
+	pcall(function() 
+		humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() 
+	end)
+end
+
+task.spawn(function()
+	while true do
+		task.wait(1)
+		local now = os.clock()
+		for pos, timestamp in pairs(dangerousZones) do
+			if now - timestamp > 8.0 then 
+				dangerousZones[pos] = nil
+			end
+		end
+	end
+end)
+
+-- =============================================================================
+-- BUCLE DE DETECCIÓN DE ENEMIGOS: ENLAZADO CON EL FILTRO VISUAL DE CONO
+-- =============================================================================
+task.spawn(function()
+	while true do
+		task.wait(0.2)
+		if getgenv().LurkerAI_Enabled and character and character:FindFirstChild("HumanoidRootPart") and not internalManualHandover then
+			local closestEnemy = nil
+			local shortestDistance = combatScanRange
+			
+			local boxParams = OverlapParams.new()
+			boxParams.FilterType = Enum.RaycastFilterType.Exclude
+			boxParams.FilterDescendantsInstances = {character}
+			
+			local nearbyParts = Workspace:GetPartBoundsInBox(rootPart.CFrame, Vector3.new(combatScanRange, 12, combatScanRange), boxParams)
+			local analyzedModels = {}
+
+			for _, part in ipairs(nearbyParts) do
+				local model = part.Parent
+				if model and model:IsA("Model") and not analyzedModels[model] and model ~= character then
+					analyzedModels[model] = true
+					
+					local enemyHumanoid = model:FindFirstChildOfClass("Humanoid")
+					local enemyRoot = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
+					
+					if enemyHumanoid and enemyRoot and enemyHumanoid.Health > 0 then
+						local isAPlayer = Players:GetPlayerFromCharacter(model)
+						if not isAPlayer then
+							local dist = (rootPart.Position - enemyRoot.Position).Magnitude
+							
+							if dist < shortestDistance then
+								-- AQUÍ EJECUTAMOS EL COTEJO DE VISIÓN EN LUGAR DEL ANTERIOR RAYCAST PLANO
+								if isTargetInRamirezCone(enemyRoot) then
+									shortestDistance = dist
+									closestEnemy = enemyRoot
+								end
+							end
+						end
+					end
+				end
+			end
+			currentEnemyTarget = closestEnemy
+		elseif not getgenv().LurkerAI_Enabled or internalManualHandover then
+			currentEnemyTarget = nil
+		end
+	end
+end)
+
+toggleButton.MouseButton1Click:Connect(function()
+	if getgenv().LurkerAI_Enabled then
+		disableSystemFully()
+		statusLabel.Text = "Status: Manual Control"
+		statusLabel.TextColor3 = Color3.fromRGB(130, 130, 130)
+	else
+		getgenv().LurkerAI_Enabled = true
+		internalManualHandover = false
+		overrideActive = false
+		toggleButton.Text = "SYSTEM: ACTIVE"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(25, 40, 25)
+		toggleButton.TextColor3 = Color3.fromRGB(100, 220, 100)
+		buttonStroke.Color = Color3.fromRGB(40, 120, 40)
+		statusLabel.Text = "Sweeping Corridors..."
+		statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+		
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+		targetPosition = rootPart.Position
+		dangerousZones = {}
+		isResting = false
+		currentEnemyTarget = nil
+		
+		task.spawn(function()
+			task.wait(0.1)
+			if getgenv().LurkerAI_Enabled then targetPosition = calculateSmartLurkerPath() end
+		end)
+	end
+end)
+
+RunService.Heartbeat:Connect(function(deltaTime)
+	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 or internalManualHandover then return end
+	
+	-- COMPORTAMIENTO INTERRUPTOR: Prioridad absoluta de movimiento manual (Override)
+	if isPlayerMovingInput() and not currentEnemyTarget then
+		overrideActive = true 
+		statusLabel.Text = "User Override: Moving..."
+		statusLabel.TextColor3 = Color3.fromRGB(140, 170, 230)
+		return 
+	end
+
+	-- CORRECCIÓN DINÁMICA POST-OVERRIDE
+	if overrideActive and not isPlayerMovingInput() then
+		overrideActive = false
+		isResting = false
+		targetPosition = calculateSmartLurkerPath() 
+		statusLabel.Text = "Recalculating post-override..."
+		statusLabel.TextColor3 = Color3.fromRGB(255, 165, 0)
+		return
+	end
+
+	-- PRIORIDAD 1: ATAQUE Y CESIÓN INMEDIATA DEL CONTROL
+	if currentEnemyTarget and currentEnemyTarget.Parent and currentEnemyTarget.Parent:FindFirstChildOfClass("Humanoid") and currentEnemyTarget.Parent:FindFirstChildOfClass("Humanoid").Health > 0 then
+		local enemyPos = currentEnemyTarget.Position
+		local distanceToEnemy = (rootPart.Position - enemyPos).Magnitude
+		
+		statusLabel.Text = "TARGET ACQUIRED!"
+		statusLabel.TextColor3 = Color3.fromRGB(255, 100, 0)
+		
+		local lookTarget = Vector3.new(enemyPos.X, rootPart.Position.Y, enemyPos.Z)
+		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 18 * deltaTime)
+		
+		if distanceToEnemy > (attackTriggerRange - 2) then
+			local moveDir = (Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)).Unit
+			pcall(function() 
+				humanoid.RootPart.AssemblyLinearVelocity = moveDir * 9.8 
+				humanoid:ChangeState(Enum.HumanoidStateType.Running)
+			end)
+		else
+			if os.clock() - lastMeleeStrikeTime >= meleeCooldown then
+				lastMeleeStrikeTime = os.clock()
+				internalManualHandover = true 
+				
+				statusLabel.Text = "STRIKING... [G]"
+				statusLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+				pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+				
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+				task.wait(0.04)
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+				
+				dangerousZones[enemyPos] = os.clock()
+				
+				statusLabel.Text = "HANDING OVER CONTROL!"
+				statusLabel.TextColor3 = Color3.fromRGB(255, 215, 0)
+				
+				local pushBackDirection = -(Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)).Unit
+				local backTime = 0.22 
+				
+				while backTime > 0 do
+					backTime = backTime - task.wait()
+					pcall(function() rootPart.AssemblyLinearVelocity = pushBackDirection * 15 end)
+				end
+				
+				disableSystemFully()
+				statusLabel.Text = "YOUR TURN! TAKE CONTROL"
+				statusLabel.TextColor3 = Color3.fromRGB(50, 255, 50)
+				internalManualHandover = false
+			end
+		end
+		return
+	end
+
+	-- PRIORIDAD 2: PATRULLA ESTÁNDAR AUTOMÁTICA
+	local currentSpeed = 7.2
+	local moveDirection = Vector3.new()
+	local isCurrentlyMoving = false
+	
+	if isResting then
+		restTimer = restTimer - deltaTime
+		statusLabel.Text = "Prowling Pause: " .. string.format("%.1f", restTimer) .. "s"
+		statusLabel.TextColor3 = Color3.fromRGB(240, 200, 80)
+		if restTimer <= 0 then
+			isResting = false
+			targetPosition = calculateSmartLurkerPath()
+		end
+		pcall(function() humanoid.RootPart.AssemblyLinearVelocity = Vector3.new() end)
+		return
+	end
+	
+	local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+	local flatTarget = Vector3.new(targetPosition.X, 0, targetPosition.Z)
+	local distance = (flatChar - flatTarget).Magnitude
+	
+	if distance > 3.5 then
+		moveDirection = (flatTarget - flatChar).Unit
+		isCurrentlyMoving = true
+		statusLabel.Text = "Sweeping Corridors..."
+		statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+	else
+		isResting = true
+		restTimer = math.random(15, 45) / 10
+		return
+	end
+	
+	if isCurrentlyMoving and moveDirection.Magnitude > 0 then
+		local nextPosition = rootPart.Position + moveDirection * (currentSpeed * deltaTime)
+		currentVisualHeading = currentVisualHeading:Lerp(moveDirection, 14 * deltaTime).Unit
+		rootPart.CFrame = CFrame.lookAt(nextPosition, rootPart.Position + currentVisualHeading)
+		
+		pcall(function() 
+			rootPart.AssemblyLinearVelocity = moveDirection * currentSpeed 
+			humanoid:ChangeState(Enum.HumanoidStateType.Running)
+		end)
+		
+		local animator = humanoid:FindFirstChildOfClass("Animator")
+		if animator then
+			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+				if track.Name == "WalkAnim" or track.Name == "RunAnim" or string.find(string.lower(track.Name), "walk") or string.find(string.lower(track.Name), "run") then
+					track:AdjustSpeed(getgenv().GilbertFootSpeed)
+				end
+			end
+		end
+	end
+end)
+
+humanoid.Died:Connect(function() screenGui:Destroy() end)
