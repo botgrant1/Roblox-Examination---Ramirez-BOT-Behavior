@@ -66,15 +66,232 @@ task.spawn(function()
 					end
 				end
 			end
+		end-- TAG DISRUPTOR FE V1.1: ARREGLO DE ACCESORIOS FLOTANTES
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local localPlayer = Players.LocalPlayer
+local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+local head = character:WaitForChild("Head", 5)
+local torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+
+getgenv().FENameTag_Enabled = false
+local heartbeatConnection = nil
+local originalHeadSize = Vector3.new(1, 1, 1)
+local originalAttachments = {}
+
+if localPlayer:WaitForChild("PlayerGui"):FindFirstChild("TagControlGui") then
+	localPlayer.PlayerGui.TagControlGui:Destroy()
+end
+
+local function applyFEScaleCero()
+	character = localPlayer.Character
+	if not character then return end
+	head = character:FindFirstChild("Head")
+	torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+	
+	if head and torso then
+		originalHeadSize = head.Size
+		table.clear(originalAttachments)
+		
+		-- 1. Redireccionar Attachments de la Cabeza al Torso de forma relativa
+		for _, instance in ipairs(character:GetChildren()) do
+			if instance:IsA("Accessory") and instance:FindFirstChild("Handle") then
+				local handle = instance.Handle
+				local accAnc = handle:FindFirstChildOfClass("Attachment")
+				
+				if accAnc then
+					-- Buscamos el attachment correspondiente en la cabeza
+					local headAnc = head:FindFirstChild(accAnc.Name)
+					if headAnc then
+						-- Guardamos su posición original por si desactivamos el script
+						originalAttachments[accAnc] = headAnc.Parent
+						
+						-- Movemos el punto de unión de la cabeza directo al Torso, 
+						-- pero compensamos la altura (+1.5 studs aprox) para que flote sobre tus hombros
+						headAnc.Parent = torso
+						headAnc.CFrame = CFrame.new(0, 1.5, 0) 
+					end
+				end
+			end
 		end
 		
-		-- Manejo de estados según la percepción
-		if targetFound then
-			print("BOT STATE: [OVERRIDE] - Objetivo detectado: " .. targetFound.Name)
-			-- Aquí conectarías tu sistema de persecución (ej. botHumanoid:MoveTo(targetFound.HumanoidRootPart.Position))
-		else
-			-- Si no ve a nadie, sigue con su comportamiento de patrullaje base
-			-- print("BOT STATE: [PATROL] - Escaneando...")
+		-- 2. Achicar la cabeza a nivel microscópico para romper el NameTag
+		head.Size = Vector3.new(0.01, 0.01, 0.01)
+		local mesh = head:FindFirstChildOfClass("SpecialMesh")
+		if mesh then
+			mesh.Scale = Vector3.new(0, 0, 0)
+		end
+		
+		-- 3. Persistencia anti-animación
+		if heartbeatConnection then heartbeatConnection:Disconnect() end
+		heartbeatConnection = RunService.Heartbeat:Connect(function()
+			if head and head.Parent and getgenv().FENameTag_Enabled then
+				head.Size = Vector3.new(0.01, 0.01, 0.01)
+			end
+		end)
+	end
+end
+
+local function restoreCharacterNormality()
+	if heartbeatConnection then 
+		heartbeatConnection:Disconnect() 
+		heartbeatConnection = nil
+	end
+	
+	character = localPlayer.Character
+	if not character then return end
+	head = character:FindFirstChild("Head")
+	torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+	
+	if head and torso then
+		head.Size = originalHeadSize
+		local mesh = head:FindFirstChildOfClass("SpecialMesh")
+		if mesh then
+			mesh.Scale = Vector3.new(1, 1, 1)
+		end
+		
+		-- Restaurar attachments a la cabeza original
+		for accAnc, originalParent in pairs(originalAttachments) do
+			if accAnc and originalParent then
+				local headAnc = torso:FindFirstChild(accAnc.Name)
+				if headAnc then
+					headAnc.Parent = head
+					headAnc.CFrame = CFrame.new(0, 0, 0) -- Reseteo a posición base de Roblox
+				end
+			end
 		end
 	end
+end
+
+-- INTERFAZ GRÁFICA (Ajustada)
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TagControlGui"
+screenGui.ResetOnSpawn = false
+screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 240, 0, 180)
+mainFrame.Position = UDim2.new(0.05, 0, 0.15, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.Parent = mainFrame
+
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Color = Color3.fromRGB(45, 45, 65)
+uiStroke.Thickness = 1
+uiStroke.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -40, 0, 35)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "TAG DISRUPTOR FE V1.1"
+titleLabel.TextColor3 = Color3.fromRGB(100, 140, 255)
+titleLabel.TextSize = 11
+titleLabel.Font = Enum.Font.Code
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = mainFrame
+
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = "ContentFrame"
+contentFrame.Size = UDim2.new(1, 0, 1, -35)
+contentFrame.Position = UDim2.new(0, 0, 0, 35)
+contentFrame.BackgroundTransparency = 1
+contentFrame.Parent = mainFrame
+
+local toggleButton = Instance.new("TextButton")
+toggleButton.Size = UDim2.new(0, 200, 0, 40)
+toggleButton.Position = UDim2.new(0, 20, 0, 10)
+toggleButton.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+toggleButton.Text = "SYSTEM: DISABLED"
+toggleButton.TextColor3 = Color3.fromRGB(120, 140, 180)
+toggleButton.TextSize = 13
+toggleButton.Font = Enum.Font.SourceSansBold
+toggleButton.Parent = contentFrame
+
+local buttonCorner = Instance.new("UICorner")
+buttonCorner.CornerRadius = UDim.new(0, 5)
+buttonCorner.Parent = toggleButton
+
+local buttonStroke = Instance.new("UIStroke")
+buttonStroke.Color = Color3.fromRGB(50, 60, 80)
+buttonStroke.Thickness = 1
+buttonStroke.Parent = toggleButton
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0, 200, 0, 60)
+statusLabel.Position = UDim2.new(0, 20, 0, 65)
+statusLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+statusLabel.Text = "Status: Broadcast Active\nNameTag visible to server."
+statusLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
+statusLabel.TextSize = 11
+statusLabel.Font = Enum.Font.Code
+statusLabel.TextWrapped = true
+statusLabel.Parent = contentFrame
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 4)
+statusCorner.Parent = statusLabel
+
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Size = UDim2.new(0, 25, 0, 25)
+minimizeButton.Position = UDim2.new(1, -30, 0, 5)
+minimizeButton.BackgroundTransparency = 1
+minimizeButton.Text = "-"
+minimizeButton.TextColor3 = Color3.fromRGB(150, 150, 150)
+minimizeButton.TextSize = 18
+minimizeButton.Font = Enum.Font.SourceSansBold
+minimizeButton.Parent = mainFrame
+
+local isMinimized = false
+minimizeButton.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		mainFrame.Size = UDim2.new(0, 240, 0, 35)
+		minimizeButton.Text = "+"
+		contentFrame.Visible = false
+	else
+		mainFrame.Size = UDim2.new(0, 240, 0, 180)
+		minimizeButton.Text = "-"
+		contentFrame.Visible = true
+	end
+end)
+
+toggleButton.MouseButton1Click:Connect(function()
+	if getgenv().FENameTag_Enabled then
+		getgenv().FENameTag_Enabled = false
+		toggleButton.Text = "SYSTEM: DISABLED"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+		toggleButton.TextColor3 = Color3.fromRGB(120, 140, 180)
+		buttonStroke.Color = Color3.fromRGB(50, 60, 80)
+		statusLabel.Text = "Status: Broadcast Active\nNameTag visible to server."
+		statusLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
+		restoreCharacterNormality()
+	else
+		getgenv().FENameTag_Enabled = true
+		toggleButton.Text = "SYSTEM: ACTIVE"
+		toggleButton.BackgroundColor3 = Color3.fromRGB(20, 45, 25)
+		toggleButton.TextColor3 = Color3.fromRGB(100, 255, 100)
+		buttonStroke.Color = Color3.fromRGB(40, 120, 40)
+		statusLabel.Text = "Status: COLLAPSED (FE)\nAttachments bound to Torso.\nNameTag hidden from server."
+		statusLabel.TextColor3 = Color3.fromRGB(100, 220, 100)
+		applyFEScaleCero()
+	end
+end)
+
+localPlayer.CharacterAdded:Connect(function(newChar)
+	character = newChar
+	task.wait(0.5)
+	if getgenv().FENameTag_Enabled then applyFEScaleCero() end
+end)
+
+localPlayer.CharacterRemoving:Connect(function()
+	if heartbeatConnection then heartbeatConnection:Disconnect() end
 end)
