@@ -1,297 +1,271 @@
--- BOT BEHAVIOR V5.3: PROTO-PERCEPCIÓN VISUAL (RAYCAST CONE)
+-- BOT BEHAVIOR MASTER SYSTEM V5.4: CORE & INTERFAZ DE CONTROL UNIFICADA
 local Workspace = game:GetService("Workspace")
-local Players = game:GetService("Players")
-
-local BotConfig = {
-	ViewDistance = 60,       -- Qué tan lejos ve el bot (en studs)
-	FieldOfView = 90,        -- Ángulo del cono de visión (90 grados al frente)
-	CheckRate = 0.1,         -- Cada cuánto tiempo escanea (0.1s evita tirones por Raycast)
-}
-
-local botCharacter = script.Parent -- Asumiendo que el script está dentro del modelo del bot
-local botHead = botCharacter:WaitForChild("Head")
-local botHumanoid = botCharacter:WaitForChild("Humanoid")
-
-getgenv().VisualSystem_Active = true
-
--- Función matemática para validar si un objetivo está en el cono visual
-local function isTargetInCone(targetPart)
-	local botToTarget = (targetPart.Position - botHead.Position)
-	local distance = botToTarget.Magnitude
-	
-	-- 1. Filtro rápido: ¿Está dentro del rango de distancia?
-	if distance > BotConfig.ViewDistance then return false end
-	
-	-- 2. Filtro rápido: ¿Está en el ángulo correcto al frente?
-	local botLookDirection = botHead.CFrame.LookVector
-	local directionToTarget = botToTarget.Unit
-	
-	-- Calculamos el ángulo usando el producto punto (Dot Product)
-	local dotProduct = botLookDirection:Dot(directionToTarget)
-	local angle = math.acos(dotProduct) * (180 / math.pi) -- Convertimos a grados
-	
-	if angle <= (BotConfig.FieldOfView / 2) then
-		-- 3. Si pasa los filtros matemáticos, tiramos EL ÚNICO Raycast para validar obstrucciones (paredes)
-		local raycastParams = RaycastParams.new()
-		raycastParams.FilterDescendantsInstances = {botCharacter} -- El bot no se choca a sí mismo
-		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
-		
-		local raycastResult = Workspace:Raycast(botHead.Position, botToTarget, raycastParams)
-		
-		if raycastResult then
-			-- Si el rayo choca con algo, validamos si es parte del personaje objetivo
-			if raycastResult.Instance:IsDescendantOf(targetPart.Parent) then
-				return true -- ¡LÍNEA DE VISIÓN LIMPIA! El bot te está viendo
-			end
-		end
-	end
-	
-	return false
-end
-
--- Bucle de escaneo optimizado
-task.spawn(function()
-	while getgenv().VisualSystem_Active and task.wait(BotConfig.CheckRate) do
-		local targetFound = nil
-		
-		-- Buscamos jugadores en el mapa
-		for _, player in ipairs(Players:GetPlayers()) do
-			local char = player.Character
-			if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
-				-- Validamos que el jugador no esté muerto
-				if char.Humanoid.Health > 0 then
-					if isTargetInCone(char.HumanoidRootPart) then
-						targetFound = char
-						break -- Prioriza al primer objetivo que ve
-					end
-				end
-			end
-		end-- TAG DISRUPTOR FE V1.1: ARREGLO DE ACCESORIOS FLOTANTES
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
-local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
-local head = character:WaitForChild("Head", 5)
-local torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
 
-getgenv().FENameTag_Enabled = false
-local heartbeatConnection = nil
-local originalHeadSize = Vector3.new(1, 1, 1)
-local originalAttachments = {}
+-- CONFIGURACIÓN DE PARÁMETROS DEL BOT
+local BotSettings = {
+	PatrolNodes = {},        
+	AcceptanceRadius = 4,    
+	ViewDistance = 60,       
+	FieldOfView = 90,        
+	CheckRate = 0.1,         
+}
 
-if localPlayer:WaitForChild("PlayerGui"):FindFirstChild("TagControlGui") then
-	localPlayer.PlayerGui.TagControlGui:Destroy()
+-- ENCONTRAR INSTANCIAS (Se buscan dinámicamente si el bot spawnea)
+local botCharacter = script.Parent
+local botHead = botCharacter:WaitForChild("Head", 5)
+local botTorso = botCharacter:FindFirstChild("Torso") or botCharacter:FindFirstChild("UpperTorso")
+local botHumanoid = botCharacter:WaitForChild("Humanoid", 5)
+
+-- VARIABLES DE ESTADO GLOBALES (Accesibles por el Menú)
+getgenv().BotMaster_SystemActive = false
+getgenv().BotMaster_VisualActive = false
+
+local BotStates = { PATROL = "Patrol", CHASE = "Chase" }
+local currentBotState = BotStates.PATROL
+local currentNodeIndex = 1
+local currentTarget = nil
+
+-- Destruir interfaces previas repetidas en el PlayerGui
+if localPlayer:WaitForChild("PlayerGui"):FindFirstChild("BotControlMasterGui") then
+	localPlayer.PlayerGui.BotControlMasterGui:Destroy()
 end
 
-local function applyFEScaleCero()
-	character = localPlayer.Character
-	if not character then return end
-	head = character:FindFirstChild("Head")
-	torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
+-- =============================================================================
+-- LOGICA CORE: PERCEPCIÓN VISUAL & MOVIMIENTO
+-- =============================================================================
+local function checkVisualCone(targetPart)
+	if not botHead then return false end
+	local botToTarget = (targetPart.Position - botHead.Position)
+	local distance = botToTarget.Magnitude
 	
-	if head and torso then
-		originalHeadSize = head.Size
-		table.clear(originalAttachments)
+	if distance > BotSettings.ViewDistance then return false end
+	
+	local botLookDirection = botHead.CFrame.LookVector
+	local directionToTarget = botToTarget.Unit
+	local dotProduct = botLookDirection:Dot(directionToTarget)
+	local angle = math.acos(dotProduct) * (180 / math.pi)
+	
+	if angle <= (BotSettings.FieldOfView / 2) then
+		local raycastParams = RaycastParams.new()
+		raycastParams.FilterDescendantsInstances = {botCharacter}
+		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 		
-		-- 1. Redireccionar Attachments de la Cabeza al Torso de forma relativa
-		for _, instance in ipairs(character:GetChildren()) do
-			if instance:IsA("Accessory") and instance:FindFirstChild("Handle") then
-				local handle = instance.Handle
-				local accAnc = handle:FindFirstChildOfClass("Attachment")
-				
-				if accAnc then
-					-- Buscamos el attachment correspondiente en la cabeza
-					local headAnc = head:FindFirstChild(accAnc.Name)
-					if headAnc then
-						-- Guardamos su posición original por si desactivamos el script
-						originalAttachments[accAnc] = headAnc.Parent
-						
-						-- Movemos el punto de unión de la cabeza directo al Torso, 
-						-- pero compensamos la altura (+1.5 studs aprox) para que flote sobre tus hombros
-						headAnc.Parent = torso
-						headAnc.CFrame = CFrame.new(0, 1.5, 0) 
-					end
-				end
-			end
+		local raycastResult = Workspace:Raycast(botHead.Position, botToTarget, raycastParams)
+		if raycastResult and raycastResult.Instance:IsDescendantOf(targetPart.Parent) then
+			return true 
 		end
-		
-		-- 2. Achicar la cabeza a nivel microscópico para romper el NameTag
-		head.Size = Vector3.new(0.01, 0.01, 0.01)
-		local mesh = head:FindFirstChildOfClass("SpecialMesh")
-		if mesh then
-			mesh.Scale = Vector3.new(0, 0, 0)
-		end
-		
-		-- 3. Persistencia anti-animación
-		if heartbeatConnection then heartbeatConnection:Disconnect() end
-		heartbeatConnection = RunService.Heartbeat:Connect(function()
-			if head and head.Parent and getgenv().FENameTag_Enabled then
-				head.Size = Vector3.new(0.01, 0.01, 0.01)
-			end
-		end)
 	end
+	return false
 end
 
-local function restoreCharacterNormality()
-	if heartbeatConnection then 
-		heartbeatConnection:Disconnect() 
-		heartbeatConnection = nil
-	end
-	
-	character = localPlayer.Character
-	if not character then return end
-	head = character:FindFirstChild("Head")
-	torso = character:FindFirstChild("Torso") or character:FindFirstChild("UpperTorso")
-	
-	if head and torso then
-		head.Size = originalHeadSize
-		local mesh = head:FindFirstChildOfClass("SpecialMesh")
-		if mesh then
-			mesh.Scale = Vector3.new(1, 1, 1)
-		end
-		
-		-- Restaurar attachments a la cabeza original
-		for accAnc, originalParent in pairs(originalAttachments) do
-			if accAnc and originalParent then
-				local headAnc = torso:FindFirstChild(accAnc.Name)
-				if headAnc then
-					headAnc.Parent = head
-					headAnc.CFrame = CFrame.new(0, 0, 0) -- Reseteo a posición base de Roblox
+local function scanTargets()
+	if not getgenv().BotMaster_VisualActive then return nil end
+	for _, player in ipairs(Players:GetPlayers()) do
+		local char = player.Character
+		if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") then
+			if char.Humanoid.Health > 0 and player ~= localPlayer then -- Ignora al scripter si quiere testear con dummies/otros
+				if checkVisualCone(char.HumanoidRootPart) then
+					return char
 				end
 			end
 		end
 	end
+	return nil
 end
 
--- INTERFAZ GRÁFICA (Ajustada)
+local function executePatrol()
+	if not botTorso or not botHumanoid then return end
+	
+	if #BotSettings.PatrolNodes == 0 then
+		local basePos = botTorso.Position
+		BotSettings.PatrolNodes = {
+			basePos + Vector3.new(20, 0, 0),
+			basePos + Vector3.new(20, 0, 20),
+			basePos + Vector3.new(0, 0, 20),
+			basePos + Vector3.new(0, 0, 0)
+		}
+	end
+
+	local targetNodePos = BotSettings.PatrolNodes[currentNodeIndex]
+	if targetNodePos then
+		botHumanoid:MoveTo(targetNodePos)
+		local distanceToNode = (botTorso.Position - targetNodePos).Magnitude
+		if distanceToNode <= BotSettings.AcceptanceRadius then
+			currentNodeIndex = currentNodeIndex + 1
+			if currentNodeIndex > #BotSettings.PatrolNodes then
+				currentNodeIndex = 1
+			end
+		end
+	end
+end
+
+-- HILO PRINCIPAL DEL BEHAVIOR
+task.spawn(function()
+	while task.wait(BotSettings.CheckRate) do
+		if getgenv().BotMaster_SystemActive then
+			-- Si el sistema visual está encendido, calcula persecución
+			local detectedTarget = scanTargets()
+			
+			if detectedTarget then
+				currentTarget = detectedTarget
+				currentBotState = BotStates.CHASE
+			else
+				if currentBotState == BotStates.CHASE then
+					currentTarget = nil
+					currentBotState = BotStates.PATROL
+				end
+			end
+			
+			-- Máquina de decisiones ejecutable
+			if currentBotState == BotStates.CHASE and currentTarget and currentTarget:FindFirstChild("HumanoidRootPart") then
+				botHumanoid:MoveTo(currentTarget.HumanoidRootPart.Position)
+			elseif currentBotState == BotStates.PATROL then
+				executePatrol()
+			end
+		else
+			-- Si la IA global está apagada, frena el bot por completo
+			if botHumanoid then botHumanoid:Move(Vector3.new(0,0,0)) end
+		end
+	end
+end)
+
+-- =============================================================================
+-- INTERFAZ GRÁFICA DE OPERACIONES (Master Menu)
+-- =============================================================================
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "TagControlGui"
+screenGui.Name = "BotControlMasterGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 240, 0, 180)
-mainFrame.Position = UDim2.new(0.05, 0, 0.15, 0)
-mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 15)
+mainFrame.Size = UDim2.new(0, 260, 0, 230)
+mainFrame.Position = UDim2.new(0.7, 0, 0.2, 0) -- Ubicado a la derecha de la pantalla
+mainFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
 mainFrame.Parent = screenGui
 
 local uiCorner = Instance.new("UICorner")
-uiCorner.CornerRadius = UDim.new(0, 8)
+uiCorner.CornerRadius = UDim.new(0, 6)
 uiCorner.Parent = mainFrame
 
 local uiStroke = Instance.new("UIStroke")
-uiStroke.Color = Color3.fromRGB(45, 45, 65)
+uiStroke.Color = Color3.fromRGB(50, 50, 70)
 uiStroke.Thickness = 1
 uiStroke.Parent = mainFrame
 
 local titleLabel = Instance.new("TextLabel")
-titleLabel.Size = UDim2.new(1, -40, 0, 35)
+titleLabel.Size = UDim2.new(1, -10, 0, 35)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "TAG DISRUPTOR FE V1.1"
-titleLabel.TextColor3 = Color3.fromRGB(100, 140, 255)
-titleLabel.TextSize = 11
+titleLabel.Text = "BOT BEHAVIOR MANAGER V5.4"
+titleLabel.TextColor3 = Color3.fromRGB(230, 180, 70)
+titleLabel.TextSize = 10
 titleLabel.Font = Enum.Font.Code
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = mainFrame
 
-local contentFrame = Instance.new("Frame")
-contentFrame.Name = "ContentFrame"
-contentFrame.Size = UDim2.new(1, 0, 1, -35)
-contentFrame.Position = UDim2.new(0, 0, 0, 35)
-contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = mainFrame
+-- BOTÓN 1: CORE ENGINE (Encendido/Apagado General)
+local coreToggle = Instance.new("TextButton")
+coreToggle.Size = UDim2.new(0, 220, 0, 38)
+coreToggle.Position = UDim2.new(0, 20, 0, 45)
+coreToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+coreToggle.Text = "CORE ENGINE: STANDBY"
+coreToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
+coreToggle.Font = Enum.Font.SourceSansBold
+coreToggle.TextSize = 12
+coreToggle.Parent = mainFrame
 
-local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(0, 200, 0, 40)
-toggleButton.Position = UDim2.new(0, 20, 0, 10)
-toggleButton.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-toggleButton.Text = "SYSTEM: DISABLED"
-toggleButton.TextColor3 = Color3.fromRGB(120, 140, 180)
-toggleButton.TextSize = 13
-toggleButton.Font = Enum.Font.SourceSansBold
-toggleButton.Parent = contentFrame
+local cCorner = Instance.new("UICorner")
+cCorner.CornerRadius = UDim.new(0, 4)
+cCorner.Parent = coreToggle
 
-local buttonCorner = Instance.new("UICorner")
-buttonCorner.CornerRadius = UDim.new(0, 5)
-buttonCorner.Parent = toggleButton
+local cStroke = Instance.new("UIStroke")
+cStroke.Color = Color3.fromRGB(60, 60, 80)
+cStroke.Parent = coreToggle
 
-local buttonStroke = Instance.new("UIStroke")
-buttonStroke.Color = Color3.fromRGB(50, 60, 80)
-buttonStroke.Thickness = 1
-buttonStroke.Parent = toggleButton
+-- BOTÓN 2: VISUAL CONE (Activar Cono Perceptivo de Visión)
+local visualToggle = Instance.new("TextButton")
+visualToggle.Size = UDim2.new(0, 220, 0, 38)
+visualToggle.Position = UDim2.new(0, 20, 0, 95)
+visualToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+visualToggle.Text = "VISUAL TRACKER: OFF"
+visualToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
+visualToggle.Font = Enum.Font.SourceSansBold
+visualToggle.TextSize = 12
+visualToggle.Parent = mainFrame
 
-local statusLabel = Instance.new("TextLabel")
-statusLabel.Size = UDim2.new(0, 200, 0, 60)
-statusLabel.Position = UDim2.new(0, 20, 0, 65)
-statusLabel.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-statusLabel.Text = "Status: Broadcast Active\nNameTag visible to server."
-statusLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
-statusLabel.TextSize = 11
-statusLabel.Font = Enum.Font.Code
-statusLabel.TextWrapped = true
-statusLabel.Parent = contentFrame
+local vCorner = Instance.new("UICorner")
+vCorner.CornerRadius = UDim.new(0, 4)
+vCorner.Parent = visualToggle
 
-local statusCorner = Instance.new("UICorner")
-statusCorner.CornerRadius = UDim.new(0, 4)
-statusCorner.Parent = statusLabel
+local vStroke = Instance.new("UIStroke")
+vStroke.Color = Color3.fromRGB(60, 60, 80)
+vStroke.Parent = visualToggle
 
-local minimizeButton = Instance.new("TextButton")
-minimizeButton.Size = UDim2.new(0, 25, 0, 25)
-minimizeButton.Position = UDim2.new(1, -30, 0, 5)
-minimizeButton.BackgroundTransparency = 1
-minimizeButton.Text = "-"
-minimizeButton.TextColor3 = Color3.fromRGB(150, 150, 150)
-minimizeButton.TextSize = 18
-minimizeButton.Font = Enum.Font.SourceSansBold
-minimizeButton.Parent = mainFrame
+-- MONITOR DE DIAGNÓSTICO DEL BOT
+local logLabel = Instance.new("TextLabel")
+logLabel.Size = UDim2.new(0, 220, 0, 65)
+logLabel.Position = UDim2.new(0, 20, 0, 145)
+logLabel.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+logLabel.Text = "SYSTEMS DIAGNOSTIC:\nAwait Core activation sequence..."
+logLabel.TextColor3 = Color3.fromRGB(140, 140, 150)
+logLabel.TextSize = 11
+logLabel.Font = Enum.Font.Code
+logLabel.TextWrapped = true
+logLabel.Parent = mainFrame
 
-local isMinimized = false
-minimizeButton.MouseButton1Click:Connect(function()
-	isMinimized = not isMinimized
-	if isMinimized then
-		mainFrame.Size = UDim2.new(0, 240, 0, 35)
-		minimizeButton.Text = "+"
-		contentFrame.Visible = false
+local lCorner = Instance.new("UICorner")
+lCorner.CornerRadius = UDim.new(0, 4)
+lCorner.Parent = logLabel
+
+-- CONTROL INTERACTIVO DE COMPORTAMIENTO
+coreToggle.MouseButton1Click:Connect(function()
+	if getgenv().BotMaster_SystemActive then
+		getgenv().BotMaster_SystemActive = false
+		coreToggle.Text = "CORE ENGINE: STANDBY"
+		coreToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+		coreToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
+		cStroke.Color = Color3.fromRGB(60, 60, 80)
+		
+		logLabel.Text = "SYSTEMS DIAGNOSTIC:\nCore Engine offline. Bot halted."
+		logLabel.TextColor3 = Color3.fromRGB(140, 140, 150)
 	else
-		mainFrame.Size = UDim2.new(0, 240, 0, 180)
-		minimizeButton.Text = "-"
-		contentFrame.Visible = true
+		getgenv().BotMaster_SystemActive = true
+		coreToggle.Text = "CORE ENGINE: RUNNING"
+		coreToggle.BackgroundColor3 = Color3.fromRGB(25, 45, 30)
+		coreToggle.TextColor3 = Color3.fromRGB(100, 230, 100)
+		cStroke.Color = Color3.fromRGB(45, 120, 55)
+		
+		logLabel.Text = "SYSTEMS DIAGNOSTIC:\nCore active. State: PATROL.\nExecuting Node-route processing..."
+		logLabel.TextColor3 = Color3.fromRGB(110, 210, 110)
 	end
 end)
 
-toggleButton.MouseButton1Click:Connect(function()
-	if getgenv().FENameTag_Enabled then
-		getgenv().FENameTag_Enabled = false
-		toggleButton.Text = "SYSTEM: DISABLED"
-		toggleButton.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-		toggleButton.TextColor3 = Color3.fromRGB(120, 140, 180)
-		buttonStroke.Color = Color3.fromRGB(50, 60, 80)
-		statusLabel.Text = "Status: Broadcast Active\nNameTag visible to server."
-		statusLabel.TextColor3 = Color3.fromRGB(140, 140, 140)
-		restoreCharacterNormality()
+visualToggle.MouseButton1Click:Connect(function()
+	if getgenv().BotMaster_VisualActive then
+		getgenv().BotMaster_VisualActive = false
+		visualToggle.Text = "VISUAL TRACKER: OFF"
+		visualToggle.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+		visualToggle.TextColor3 = Color3.fromRGB(160, 160, 170)
+		vStroke.Color = Color3.fromRGB(60, 60, 80)
 	else
-		getgenv().FENameTag_Enabled = true
-		toggleButton.Text = "SYSTEM: ACTIVE"
-		toggleButton.BackgroundColor3 = Color3.fromRGB(20, 45, 25)
-		toggleButton.TextColor3 = Color3.fromRGB(100, 255, 100)
-		buttonStroke.Color = Color3.fromRGB(40, 120, 40)
-		statusLabel.Text = "Status: COLLAPSED (FE)\nAttachments bound to Torso.\nNameTag hidden from server."
-		statusLabel.TextColor3 = Color3.fromRGB(100, 220, 100)
-		applyFEScaleCero()
+		getgenv().BotMaster_VisualActive = true
+		visualToggle.Text = "VISUAL TRACKER: ACTIVE"
+		visualToggle.BackgroundColor3 = Color3.fromRGB(25, 40, 55)
+		visualToggle.TextColor3 = Color3.fromRGB(100, 180, 255)
+		vStroke.Color = Color3.fromRGB(40, 90, 140)
 	end
 end)
 
-localPlayer.CharacterAdded:Connect(function(newChar)
-	character = newChar
-	task.wait(0.5)
-	if getgenv().FENameTag_Enabled then applyFEScaleCero() end
-end)
-
-localPlayer.CharacterRemoving:Connect(function()
-	if heartbeatConnection then heartbeatConnection:Disconnect() end
-end)
+-- Limpieza segura ante destrucción del bot/script
+if botHumanoid then
+	botHumanoid.Died:Connect(function()
+		screenGui:Destroy()
+	end)
+end
