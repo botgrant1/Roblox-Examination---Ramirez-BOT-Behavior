@@ -1,20 +1,15 @@
--- EXPERIMENTO FE V2: Desplazamiento por articulación (Sin muerte / Cámara fija)
+-- EXPERIMENTO FE V3: Escala Cero (Sin romper colisiones ni articulaciones)
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
 
 local localPlayer = Players.LocalPlayer
 local char = localPlayer.Character or localPlayer.CharacterAdded:Wait()
 local head = char:WaitForChild("Head", 5)
-local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso") -- R6 / R15
+local torso = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
 local humanoid = char:WaitForChild("Humanoid", 5)
 
 if head and torso and humanoid then
-	-- STEP 1: Fijar la cámara al Torso para que no se caiga con la cabeza
-	local camera = Workspace.CurrentCamera
-	camera.CameraSubject = torso
-	
-	-- STEP 2: Re-soldar accesorios localmente al Torso (Evita calvicie)
+	-- STEP 1: Asegurar accesorios locales al Torso (Evita que se encojan con la cabeza)
 	for _, instance in ipairs(char:GetChildren()) do
 		if instance:IsA("Accessory") and instance:FindFirstChild("Handle") then
 			local handle = instance.Handle
@@ -33,27 +28,20 @@ if head and torso and humanoid then
 		end
 	end
 	
-	-- STEP 3: Modificar el cuello en lugar de destruirlo
-	-- Buscamos la articulación del cuello
-	local neck = head:FindFirstChild("Neck") or torso:FindFirstChild("Neck")
+	-- STEP 2: Encojer la cabeza de forma replicada
+	-- Al cambiar el Size a algo diminuto, el NameTag se cansa de calcular el tamaño y desaparece (FE)
+	head.Size = Vector3.new(0.01, 0.01, 0.01)
 	
-	if neck and neck:IsA("Motor6D") then
-		-- Modificamos el C1 (CFrame de desfase). 
-		-- Al subir el C1 localmente, el servidor replica que la cabeza se desplaza hacia ABAJO
-		-- Lo dejamos a -40 studs: lo suficientemente bajo para esconder el tag, pero arriba del límite de muerte.
-		neck.C1 = neck.C1 * CFrame.new(0, 40, 0)
-	else
-		-- Si el juego usa Welds tradicionales en vez de Motor6D:
-		local alternativeNeck = head:FindFirstChildOfClass("Weld") or torso:FindFirstChildOfClass("Weld")
-		if alternativeNeck then
-			alternativeNeck.C1 = alternativeNeck.C1 * CFrame.new(0, 40, 0)
-		end
+	-- Si tiene un SpecialMesh interno, también lo hacemos microscópico
+	local mesh = head:FindFirstChildOfClass("SpecialMesh")
+	if mesh then
+		mesh.Scale = Vector3.new(0, 0, 0)
 	end
 	
-	-- Mantener consistencia local por si el script de animaciones intenta resetear el cuello
+	-- Forzamos a que conserve el tamaño por si el script de animaciones intenta inflarla de nuevo
 	RunService.Heartbeat:Connect(function()
-		if neck and neck.Parent then
-			neck.CurrentAngle = 0
+		if head and head.Parent then
+			head.Size = Vector3.new(0.01, 0.01, 0.01)
 		end
 	end)
 end
