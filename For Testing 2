@@ -1,45 +1,46 @@
--- SCRIPT LOCAL: Ocultar NameTags destruyendo el renderizado local
+-- EXPERIMENTO FE: Ocultar NameTag moviendo la cabeza (Requiere replicación libre)
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local localPlayer = Players.LocalPlayer
+local char = localPlayer.Character or localPlayer.CharacterAdded:Wait()
 
-local function cleanNameTags(character)
-    if not character then return end
-    local head = character:WaitForChild("Head", 5)
-    if head then
-        -- Buscamos cualquier interfaz flotante metida en la cabeza
-        for _, obj in ipairs(head:GetChildren()) do
-            if obj:IsA("BillboardGui") or obj:IsA("ScreenGui") or string.find(string.lower(obj.Name), "tag") or string.find(string.lower(obj.Name), "name") then
-                obj.Enabled = false -- O obj:Destroy() si querés eliminarlo de cuajo
-            end
-        end
-    end
-    
-    -- Forzado por si el juego usa el sistema nativo del Humanoid
-    local humanoid = character:WaitForChild("Humanoid", 5)
-    if humanoid then
-        humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-    end
+local head = char:WaitForChild("Head", 5)
+local torso = char:WaitForChild("Torso", 5) or char:WaitForChild("UpperTorso", 5) -- Compatible con R6 y R15
+
+if head and torso then
+	-- STEP 1: Asegurar accesorios locales al Torso para mantener la estética
+	for _, instance in ipairs(char:GetChildren()) do
+		if instance:IsA("Accessory") and instance:FindFirstChild("Handle") then
+			local handle = instance.Handle
+			
+			-- Limpiamos uniones viejas con la cabeza
+			for _, joint in ipairs(handle:GetChildren()) do
+				if joint:IsA("Weld") or joint:IsA("WeldConstraint") or joint:IsA("Attachment") then
+					joint:Destroy()
+				end
+			end
+			
+			-- Creamos la nueva unión fija directo al pecho/torso
+			local newWeld = Instance.new("WeldConstraint")
+			newWeld.Part0 = handle
+			newWeld.Part1 = torso
+			newWeld.Parent = handle
+			handle.CanCollide = false
+		end
+	end
+	
+	-- STEP 2: Romper la unión del cuello para liberar la cabeza de las animaciones del servidor
+	local neck = head:FindFirstChild("Neck") or torso:FindFirstChild("Neck")
+	if neck then
+		neck:Destroy()
+	end
+	
+	-- STEP 3: Forzar la replicación enviando la cabeza al vacío
+	-- Usamos Heartbeat para asegurar que la física local obligue al servidor a registrar la nueva posición
+	game:GetService("RunService").Heartbeat:Connect(function()
+		if head and head.Parent then
+			-- Desplazamos la cabeza 500 studs hacia abajo de tu posición actual
+			head.CFrame = torso.CFrame * CFrame.new(0, -500, 0)
+			head.AssemblyLinearVelocity = Vector3.new(0, -100, 0) -- Fuerza física extra para asegurar réplica
+		end
+	end)
 end
-
--- Monitorear cuando spawneas
-localPlayer.CharacterAdded:Connect(function(char)
-    task.wait(0.5)
-    cleanNameTags(char)
-end)
-
-if localPlayer.Character then
-    cleanNameTags(localPlayer.Character)
-end
-
--- Opcional: Si querés limpiar también los tags de los bots/enemigos que aparezcan en Examination:
-RunService.Heartbeat:Connect(function()
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p.Character then
-            local h = p.Character:FindFirstChild("Humanoid")
-            if h and h.DisplayDistanceType ~= Enum.HumanoidDisplayDistanceType.None then
-                h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
-            end
-        end
-    end
-end)
