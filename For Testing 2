@@ -1,1 +1,55 @@
+local player = game.Players.LocalPlayer  
+local teams = game:GetService("Teams")  
+local repStorage = game:GetService("ReplicatedStorage")
 
+-- 1. Cambiar equipo al RIF (o el que prefieras)  
+local targetTeam = teams.RIF  
+if targetTeam then  
+player.Team = targetTeam  
+player.Neutral = true -- Importante para dañar aliados  
+end
+
+-- 2. Buscar remotas de daño comunes en Examination  
+local remoteNames = {"DamageEvent", "TakeDamage", "DealDamage", "HitSuccess"}  
+local foundRemote = nil
+
+for _, name in pairs(remoteNames) do  
+local remote = repStorage:FindFirstChild(name) or game:GetService("Workspace"):FindFirstChild(name)  
+if remote and remote:IsA("RemoteEvent") then  
+foundRemote = remote  
+break  
+end  
+end
+
+if foundRemote then  
+print("Remote encontrada: " .. foundRemote.Name)  
+-- Medium puede no permitir hook, pero podemos llamar la remote manualmente  
+-- Esto requeriría que descubras los parámetros del remote (target, damage)  
+else  
+print("No se encontró remote de daño. Usando método de hack visual.")  
+end
+
+-- 3. Modificador de daño local (para Medium básico)  
+player.CharacterAdded:Connect(function(char)  
+wait(0.5)  
+-- Forzar que el equipo se mantenga  
+player.Team = targetTeam
+
+-- Añadir un Tool para dañar manualmente  
+local tool = Instance.new("Tool")  
+tool.RequiresHandle = false  
+tool.Name = "FF_Hack"  
+tool.Parent = char
+
+tool.Activated:Connect(function()  
+for _, otherPlayer in ipairs(game.Players:GetPlayers()) do  
+if otherPlayer ~= player then  
+-- Intento de daño visual/local  
+print("[FF] Dañando a: " .. otherPlayer.Name)  
+-- Medium puede permitir fireclickdetectors en otros jugadores  
+end  
+end  
+end)  
+end)
+
+print("Script listo para Medium. Ejecuta y prueba con compañeros.")  
