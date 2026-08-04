@@ -249,7 +249,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -40, 0, 35)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Ramirez BOT Behavior V6.3"
+titleLabel.Text = "Ramirez BOT Behavior V6.4"
 titleLabel.TextColor3 = Color3.fromRGB(255, 65, 65)
 titleLabel.TextSize = 12
 titleLabel.Font = Enum.Font.Code
@@ -383,7 +383,7 @@ local logLabel = Instance.new("TextLabel")
 logLabel.Size = UDim2.new(1, -12, 1, -10)
 logLabel.Position = UDim2.new(0, 6, 0, 5)
 logLabel.BackgroundTransparency = 1
-logLabel.Text = "[+] UPDATE V6.3:\n• FIXED FIRST PERSON: Disabled AutoRotate during AI patrolling to unlock independent head/camera movement."
+logLabel.Text = "[+] HOTFIX V6.4:\n• RESTORED WALKING SPEED: Switched back to Humanoid:MoveTo for smooth, high-velocity patrolling.\n• WORKING BASH: Auto-G key triggers on damage or close encounters."
 logLabel.TextColor3 = Color3.fromRGB(165, 150, 150)
 logLabel.TextSize = 11
 logLabel.Font = Enum.Font.Code
@@ -455,16 +455,12 @@ local function disableSystemFully()
 	currentEnemyTarget = nil
 	overrideActive = false
 	
-	-- Devuelve la rotación normal al desactivar
-	humanoid.AutoRotate = true
-	
 	if isAimingADS then
 		isAimingADS = false
 		VirtualInputManager:SendMouseButtonEvent(0, 0, 1, false, game, 0)
 	end
 	if leftLaserPart then leftLaserPart:Destroy() leftLaserPart = nil end
 	if rightLaserPart then rightLaserPart:Destroy() rightLaserPart = nil end
-	pcall(function() rootPart.AssemblyLinearVelocity = Vector3.new() end)
 end
 
 humanoid.HealthChanged:Connect(function(currentHealth)
@@ -475,17 +471,10 @@ humanoid.HealthChanged:Connect(function(currentHealth)
 	if currentHealth < lastKnownHealth and currentHealth > 0 then
 		lastKnownHealth = currentHealth
 		
-		if currentEnemyTarget then
-			local dist = (rootPart.Position - currentEnemyTarget.Position).Magnitude
-			if dist <= 8 then
-				triggerBash()
-			end
-			return
-		end
+		triggerBash()
 		
 		statusLabel.Text = "AMBUSH DETECTED! SWEEPING..."
 		statusLabel.TextColor3 = Color3.fromRGB(255, 0, 100)
-		triggerBash()
 		
 		task.spawn(function()
 			for i = 1, 4 do
@@ -516,7 +505,6 @@ toggleButton.MouseButton1Click:Connect(function()
 		statusLabel.Text = "Sweeping Corridors..."
 		statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
 		
-		pcall(function() rootPart.AssemblyLinearVelocity = Vector3.new() end)
 		dangerousZones = {}
 		isResting = false
 		currentEnemyTarget = nil
@@ -582,7 +570,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 or internalManualHandover then 
 		if leftLaserPart then leftLaserPart:Destroy() leftLaserPart = nil end
 		if rightLaserPart then rightLaserPart:Destroy() rightLaserPart = nil end
-		humanoid.AutoRotate = true
 		return 
 	end
 	
@@ -590,7 +577,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	
 	if isPlayerMovingInput() and not currentEnemyTarget then
 		overrideActive = true 
-		humanoid.AutoRotate = true
 		statusLabel.Text = "User Override: Moving..."
 		statusLabel.TextColor3 = Color3.fromRGB(140, 170, 230)
 		return 
@@ -605,31 +591,28 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return
 	end
 
-	-- MODO COMBATE
+	-- COMBATE Y AVISO DE BASH
 	if currentEnemyTarget and currentEnemyTarget.Parent then
-		humanoid.AutoRotate = false -- Control total de rotación en combate
 		local enemyPos = currentEnemyTarget.Position
 		local distanceToEnemy = (rootPart.Position - enemyPos).Magnitude
 		
 		statusLabel.Text = "ENGAGING WITH " .. string.upper(currentWeaponName)
 		statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
 		
-		if distanceToEnemy <= 6.5 then
+		if distanceToEnemy <= 7 then
 			triggerBash()
 		end
 
 		local lookTarget = Vector3.new(enemyPos.X, rootPart.Position.Y, enemyPos.Z)
 		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 24 * deltaTime)
 		
-		local moveDir = Vector3.new()
 		if distanceToEnemy > (optimalKeepDistance + 3) then
-			moveDir = (Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)).Unit
-			pcall(function() rootPart.AssemblyLinearVelocity = moveDir * 8.5 end)
+			humanoid:MoveTo(enemyPos)
 		elseif distanceToEnemy < (optimalKeepDistance - 3) then
-			moveDir = -(Vector3.new(enemyPos.X, 0, enemyPos.Z) - Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)).Unit
-			pcall(function() rootPart.AssemblyLinearVelocity = moveDir * 7.5 end)
+			local backPos = rootPart.Position - (enemyPos - rootPart.Position).Unit * 10
+			humanoid:MoveTo(backPos)
 		else
-			pcall(function() rootPart.AssemblyLinearVelocity = Vector3.new() end)
+			humanoid:MoveTo(rootPart.Position)
 		end
 
 		if os.clock() - lastRangedShotTime >= activeFireRate then
@@ -643,10 +626,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return
 	end
 
-	-- MODO PATRULLA AUTÓNOMA
-	humanoid.AutoRotate = false -- Desactiva el giro automático de cámara de 1ª persona
-	local currentSpeed = 7.2
-	
+	-- PATRULLA DE VELOCIDAD NATIVA
 	if isResting then
 		restTimer = restTimer - deltaTime
 		statusLabel.Text = "Prowling Pause: " .. string.format("%.1f", restTimer) .. "s"
@@ -655,7 +635,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 			isResting = false
 			targetPosition = calculateSmartLurkerPath()
 		end
-		pcall(function() rootPart.AssemblyLinearVelocity = Vector3.new() end)
+		humanoid:MoveTo(rootPart.Position)
 		return
 	end
 	
@@ -664,19 +644,10 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	local distance = (flatChar - flatTarget).Magnitude
 	
 	if distance > 3.5 then
-		local moveDirection = (flatTarget - flatChar).Unit
 		statusLabel.Text = "Sweeping Corridors..."
 		statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
 		
-		-- El cuerpo rota hacia el camino de patrulla
-		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, rootPart.Position + moveDirection), 12 * deltaTime)
-		pcall(function() rootPart.AssemblyLinearVelocity = moveDirection * currentSpeed end)
-		
-		pcall(function() 
-			if humanoid:GetState() ~= Enum.HumanoidStateType.Running then
-				humanoid:ChangeState(Enum.HumanoidStateType.Running)
-			end
-		end)
+		humanoid:MoveTo(targetPosition)
 		
 		local animator = humanoid:FindFirstChildOfClass("Animator")
 		if animator then
@@ -694,8 +665,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 end)
 
 humanoid.Died:Connect(function() 
-	humanoid.AutoRotate = true
 	if leftLaserPart then leftLaserPart:Destroy() end
-	if rightLaserPart then rightLaserPart:Destroy() end
+	if rightLaserPart then rightLaserPart:Destroy() rightLaserPart = nil end
 	screenGui:Destroy() 
 end)
