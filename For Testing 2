@@ -220,15 +220,15 @@ local function calculateSmartLurkerPath()
 	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or (rootPart.Position + rootPart.CFrame.LookVector * 15)
 end
 
--- ==================== DISEÑO MEJORADO DE GUI V6.5 ====================
+-- ==================== DISEÑO V6.6 CON PESTAÑA CHANGELOG ====================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "LurkerControlGui"
 screenGui.ResetOnSpawn = false
 screenGui.Parent = targetGuiParent
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 260, 0, 360) 
-mainFrame.Position = UDim2.new(0.04, 0, 0.3, 0)
+mainFrame.Size = UDim2.new(0, 260, 0, 480) 
+mainFrame.Position = UDim2.new(0.04, 0, 0.25, 0)
 mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -259,7 +259,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -40, 1, 0)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "RAMIRÉZ BOT BEHAVIOR • V6.5"
+titleLabel.Text = "RAMIREZ AI • V6.6"
 titleLabel.TextColor3 = Color3.fromRGB(240, 80, 80)
 titleLabel.TextSize = 13
 titleLabel.Font = Enum.Font.Code
@@ -286,7 +286,7 @@ contentFrame.Parent = mainFrame
 
 -- System Toggle Button
 local toggleButton = Instance.new("TextButton")
-toggleButton.Size = UDim2.new(1, 0, 0, 38)
+toggleButton.Size = UDim2.new(1, 0, 0, 36)
 toggleButton.Position = UDim2.new(0, 0, 0, 0)
 toggleButton.BackgroundColor3 = Color3.fromRGB(30, 22, 24)
 toggleButton.Text = "SYSTEM: DISABLED"
@@ -304,10 +304,10 @@ buttonStroke.Color = Color3.fromRGB(90, 35, 35)
 buttonStroke.Thickness = 1
 buttonStroke.Parent = toggleButton
 
--- Status Container
+-- Status Display
 local statusFrame = Instance.new("Frame")
-statusFrame.Size = UDim2.new(1, 0, 0, 28)
-statusFrame.Position = UDim2.new(0, 0, 0, 46)
+statusFrame.Size = UDim2.new(1, 0, 0, 26)
+statusFrame.Position = UDim2.new(0, 0, 0, 42)
 statusFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 statusFrame.Parent = contentFrame
 
@@ -328,8 +328,8 @@ statusLabel.Parent = statusFrame
 
 -- Weapon Display
 local weaponFrame = Instance.new("Frame")
-weaponFrame.Size = UDim2.new(1, 0, 0, 28)
-weaponFrame.Position = UDim2.new(0, 0, 0, 80)
+weaponFrame.Size = UDim2.new(1, 0, 0, 26)
+weaponFrame.Position = UDim2.new(0, 0, 0, 74)
 weaponFrame.BackgroundColor3 = Color3.fromRGB(22, 18, 28)
 weaponFrame.Parent = contentFrame
 
@@ -350,8 +350,8 @@ weaponLabel.Parent = weaponFrame
 
 -- FOV Laser Toggle
 local fovToggleButton = Instance.new("TextButton")
-fovToggleButton.Size = UDim2.new(1, 0, 0, 28)
-fovToggleButton.Position = UDim2.new(0, 0, 0, 114)
+fovToggleButton.Size = UDim2.new(1, 0, 0, 26)
+fovToggleButton.Position = UDim2.new(0, 0, 0, 106)
 fovToggleButton.BackgroundColor3 = Color3.fromRGB(20, 26, 36)
 fovToggleButton.Text = "FOV CONE: ACTIVE"
 fovToggleButton.TextColor3 = Color3.fromRGB(100, 160, 245)
@@ -365,8 +365,8 @@ fovCorner.Parent = fovToggleButton
 
 -- Speed Controller Section
 local speedFrame = Instance.new("Frame")
-speedFrame.Size = UDim2.new(1, 0, 0, 36)
-speedFrame.Position = UDim2.new(0, 0, 0, 148)
+speedFrame.Size = UDim2.new(1, 0, 0, 32)
+speedFrame.Position = UDim2.new(0, 0, 0, 138)
 speedFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 speedFrame.Parent = contentFrame
 
@@ -386,8 +386,8 @@ speedLabel.TextXAlignment = Enum.TextXAlignment.Left
 speedLabel.Parent = speedFrame
 
 local minusButton = Instance.new("TextButton")
-minusButton.Size = UDim2.new(0, 32, 0, 24)
-minusButton.Position = UDim2.new(1, -72, 0, 6)
+minusButton.Size = UDim2.new(0, 30, 0, 22)
+minusButton.Position = UDim2.new(1, -68, 0, 5)
 minusButton.BackgroundColor3 = Color3.fromRGB(28, 30, 36)
 minusButton.Text = "-"
 minusButton.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -400,8 +400,8 @@ minusCorner.CornerRadius = UDim.new(0, 4)
 minusCorner.Parent = minusButton
 
 local plusButton = Instance.new("TextButton")
-plusButton.Size = UDim2.new(0, 32, 0, 24)
-plusButton.Position = UDim2.new(1, -36, 0, 6)
+plusButton.Size = UDim2.new(0, 30, 0, 22)
+plusButton.Position = UDim2.new(1, -34, 0, 5)
 plusButton.BackgroundColor3 = Color3.fromRGB(28, 30, 36)
 plusButton.Text = "+"
 plusButton.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -413,7 +413,48 @@ local plusCorner = Instance.new("UICorner")
 plusCorner.CornerRadius = UDim.new(0, 4)
 plusCorner.Parent = plusButton
 
--- Minimized behavior
+-- Pestaña / Caja de Changelog
+local changelogFrame = Instance.new("Frame")
+changelogFrame.Size = UDim2.new(1, 0, 0, 242)
+changelogFrame.Position = UDim2.new(0, 0, 0, 178)
+changelogFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
+changelogFrame.BorderSizePixel = 0
+changelogFrame.Parent = contentFrame
+
+local changelogCorner = Instance.new("UICorner")
+changelogCorner.CornerRadius = UDim.new(0, 6)
+changelogCorner.Parent = changelogFrame
+
+local changelogStroke = Instance.new("UIStroke")
+changelogStroke.Color = Color3.fromRGB(30, 32, 38)
+changelogStroke.Thickness = 1
+changelogStroke.Parent = changelogFrame
+
+local changelogTitle = Instance.new("TextLabel")
+changelogTitle.Size = UDim2.new(1, -12, 0, 22)
+changelogTitle.Position = UDim2.new(0, 8, 0, 4)
+changelogTitle.BackgroundTransparency = 1
+changelogTitle.Text = "📋 CHANGELOG LOGS"
+changelogTitle.TextColor3 = Color3.fromRGB(200, 80, 80)
+changelogTitle.TextSize = 10
+changelogTitle.Font = Enum.Font.Code
+changelogTitle.TextXAlignment = Enum.TextXAlignment.Left
+changelogTitle.Parent = changelogFrame
+
+local changelogLog = Instance.new("TextLabel")
+changelogLog.Size = UDim2.new(1, -16, 1, -28)
+changelogLog.Position = UDim2.new(0, 8, 0, 26)
+changelogLog.BackgroundTransparency = 1
+changelogLog.Text = "[V6.6 / V6.5 Updates]\n• GUI Restored: Re-added Changelog box with dynamic updates.\n• Instant Disengage: WASD keypress immediately clears lock-on.\n\n[V6.4 Updates]\n• Speed Fix: Switched back to MoveTo() for natural walking speed.\n• Auto Bash: Auto-triggers G key on unexpected damage.\n\n[V6.3 Updates]\n• Weapon scan adjustments and priority tuning."
+changelogLog.TextColor3 = Color3.fromRGB(150, 155, 165)
+changelogLog.TextSize = 10
+changelogLog.Font = Enum.Font.Code
+changelogLog.TextWrapped = true
+changelogLog.TextYAlignment = Enum.TextYAlignment.Top
+changelogLog.TextXAlignment = Enum.TextXAlignment.Left
+changelogLog.Parent = changelogFrame
+
+-- Minimized Behavior
 local isMinimized = false
 minimizeButton.MouseButton1Click:Connect(function()
 	isMinimized = not isMinimized
@@ -422,7 +463,7 @@ minimizeButton.MouseButton1Click:Connect(function()
 		minimizeButton.Text = "+"
 		contentFrame.Visible = false
 	else
-		mainFrame.Size = UDim2.new(0, 260, 0, 360)
+		mainFrame.Size = UDim2.new(0, 260, 0, 480)
 		minimizeButton.Text = "−"
 		contentFrame.Visible = true
 	end
