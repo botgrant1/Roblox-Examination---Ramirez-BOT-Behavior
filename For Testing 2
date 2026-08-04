@@ -12,7 +12,6 @@ getgenv().LurkerAI_Enabled = false
 getgenv().GilbertFootSpeed = 1.7 
 getgenv().Ramirez_ShowFOV = true 
 
--- Definición del contenedor de la GUI manteniendo compatibilidad con gethui()
 local getHuiFunction = gethui or function() return player:WaitForChild("PlayerGui") end
 local targetGuiParent = getHuiFunction()
 
@@ -53,6 +52,8 @@ local dangerousZones = {}
 local currentEnemyTarget = nil
 local combatScanRange = 45 
 local lastRangedShotTime = 0
+local lastBashTime = 0
+local bashCooldown = 1.2
 local internalManualHandover = false 
 local isAimingADS = false
 
@@ -102,6 +103,17 @@ end
 local function isPlayerMovingInput()
 	local moveDirection = humanoid.MoveDirection
 	return moveDirection.Magnitude > 0.1
+end
+
+local function triggerBash()
+	if os.clock() - lastBashTime >= bashCooldown then
+		lastBashTime = os.clock()
+		task.spawn(function()
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+			task.wait(0.05)
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+		end)
+	end
 end
 
 local function updateVisionLasers()
@@ -237,7 +249,7 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -40, 0, 35)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "Ramirez BOT Behavior V6.1"
+titleLabel.Text = "Ramirez BOT Behavior V6.3"
 titleLabel.TextColor3 = Color3.fromRGB(255, 65, 65)
 titleLabel.TextSize = 12
 titleLabel.Font = Enum.Font.Code
@@ -371,7 +383,7 @@ local logLabel = Instance.new("TextLabel")
 logLabel.Size = UDim2.new(1, -12, 1, -10)
 logLabel.Position = UDim2.new(0, 6, 0, 5)
 logLabel.BackgroundTransparency = 1
-logLabel.Text = "[+] UPDATE V6.1:\n• ADVANCED AIMBOT: Integrated velocity prediction & smooth target tracking.\n• FIRST-PERSON COMPATIBILITY: Decoupled camera lock from body rotation during patrolling."
+logLabel.Text = "[+] UPDATE V6.3:\n• FIXED FIRST PERSON: Disabled AutoRotate during AI patrolling to unlock independent head/camera movement."
 logLabel.TextColor3 = Color3.fromRGB(165, 150, 150)
 logLabel.TextSize = 11
 logLabel.Font = Enum.Font.Code
@@ -442,6 +454,10 @@ local function disableSystemFully()
 	isResting = false
 	currentEnemyTarget = nil
 	overrideActive = false
+	
+	-- Devuelve la rotación normal al desactivar
+	humanoid.AutoRotate = true
+	
 	if isAimingADS then
 		isAimingADS = false
 		VirtualInputManager:SendMouseButtonEvent(0, 0, 1, false, game, 0)
@@ -458,9 +474,19 @@ humanoid.HealthChanged:Connect(function(currentHealth)
 	end
 	if currentHealth < lastKnownHealth and currentHealth > 0 then
 		lastKnownHealth = currentHealth
-		if currentEnemyTarget then return end
+		
+		if currentEnemyTarget then
+			local dist = (rootPart.Position - currentEnemyTarget.Position).Magnitude
+			if dist <= 8 then
+				triggerBash()
+			end
+			return
+		end
+		
 		statusLabel.Text = "AMBUSH DETECTED! SWEEPING..."
 		statusLabel.TextColor3 = Color3.fromRGB(255, 0, 100)
+		triggerBash()
+		
 		task.spawn(function()
 			for i = 1, 4 do
 				if currentEnemyTarget then break end 
@@ -505,7 +531,6 @@ task.spawn(function()
 		weaponLabel.Text = "Weapon: " .. currentWeaponName
 		
 		if getgenv().LurkerAI_Enabled and character and character:FindFirstChild("HumanoidRootPart") and not internalManualHandover then
-			-- Si ya hay un objetivo válido y sigue activo dentro del rango, mantener fijación
 			if currentEnemyTarget and currentEnemyTarget.Parent and currentEnemyTarget.Parent:FindFirstChildOfClass("Humanoid") then
 				local hum = currentEnemyTarget.Parent:FindFirstChildOfClass("Humanoid")
 				local dist = (rootPart.Position - currentEnemyTarget.Position).Magnitude
@@ -557,6 +582,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 or internalManualHandover then 
 		if leftLaserPart then leftLaserPart:Destroy() leftLaserPart = nil end
 		if rightLaserPart then rightLaserPart:Destroy() rightLaserPart = nil end
+		humanoid.AutoRotate = true
 		return 
 	end
 	
@@ -564,6 +590,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	
 	if isPlayerMovingInput() and not currentEnemyTarget then
 		overrideActive = true 
+		humanoid.AutoRotate = true
 		statusLabel.Text = "User Override: Moving..."
 		statusLabel.TextColor3 = Color3.fromRGB(140, 170, 230)
 		return 
@@ -578,24 +605,21 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return
 	end
 
+	-- MODO COMBATE
 	if currentEnemyTarget and currentEnemyTarget.Parent then
+		humanoid.AutoRotate = false -- Control total de rotación en combate
 		local enemyPos = currentEnemyTarget.Position
 		local distanceToEnemy = (rootPart.Position - enemyPos).Magnitude
 		
 		statusLabel.Text = "ENGAGING WITH " .. string.upper(currentWeaponName)
 		statusLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
 		
-		-- PREDICCIÓN DE VELOCIDAD PARA AIMBOT MEJORADO
-		local enemyVelocity = Vector3.new()
-		if currentEnemyTarget:IsA("BasePart") then
-			enemyVelocity = currentEnemyTarget.AssemblyLinearVelocity
+		if distanceToEnemy <= 6.5 then
+			triggerBash()
 		end
-		
-		local timeToTarget = distanceToEnemy / 150 -- Estimación de tiempo de bala/reacción
-		local predictedPosition = enemyPos + (enemyVelocity * timeToTarget)
-		
-		local lookTarget = Vector3.new(predictedPosition.X, rootPart.Position.Y, predictedPosition.Z)
-		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 18 * deltaTime)
+
+		local lookTarget = Vector3.new(enemyPos.X, rootPart.Position.Y, enemyPos.Z)
+		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 24 * deltaTime)
 		
 		local moveDir = Vector3.new()
 		if distanceToEnemy > (optimalKeepDistance + 3) then
@@ -619,6 +643,8 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return
 	end
 
+	-- MODO PATRULLA AUTÓNOMA
+	humanoid.AutoRotate = false -- Desactiva el giro automático de cámara de 1ª persona
 	local currentSpeed = 7.2
 	
 	if isResting then
@@ -635,15 +661,16 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	
 	local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
 	local flatTarget = Vector3.new(targetPosition.X, 0, targetPosition.Z)
-	 musicalDistance = (flatChar - flatTarget).Magnitude
+	local distance = (flatChar - flatTarget).Magnitude
 	
-	if musicalDistance > 3.5 then
+	if distance > 3.5 then
 		local moveDirection = (flatTarget - flatChar).Unit
 		statusLabel.Text = "Sweeping Corridors..."
 		statusLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
 		
-		-- NAVEGACIÓN COMPATIBLE CON PRIMERA PERSONA (MoveTo sin forzar CFrame rígido)
-		humanoid:MoveTo(targetPosition)
+		-- El cuerpo rota hacia el camino de patrulla
+		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, rootPart.Position + moveDirection), 12 * deltaTime)
+		pcall(function() rootPart.AssemblyLinearVelocity = moveDirection * currentSpeed end)
 		
 		pcall(function() 
 			if humanoid:GetState() ~= Enum.HumanoidStateType.Running then
@@ -667,6 +694,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 end)
 
 humanoid.Died:Connect(function() 
+	humanoid.AutoRotate = true
 	if leftLaserPart then leftLaserPart:Destroy() end
 	if rightLaserPart then rightLaserPart:Destroy() end
 	screenGui:Destroy() 
