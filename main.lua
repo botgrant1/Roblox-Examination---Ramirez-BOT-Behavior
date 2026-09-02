@@ -1,16 +1,52 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local PathfindingService = game:GetService("PathfindingService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
+local Debris = game:GetService("Debris")
 
 local player = Players.LocalPlayer
 local character = player.Character or player.CharacterAdded:Wait()
 local humanoid = character:WaitForChild("Humanoid")
 local rootPart = character:WaitForChild("HumanoidRootPart")
+local animator = humanoid:WaitForChild("Animator")
+
+humanoid.AutoRotate = true
 
 getgenv().LurkerAI_Enabled = false
-getgenv().GilbertFootSpeed = 1.7 
+getgenv().GilbertFootSpeed = 0.75 
 getgenv().Ramirez_ShowFOV = true 
+getgenv().Ramirez_ShowWaypoints = true 
+
+local SelfDodgeConfig = {
+	Enabled = true,
+	DodgeChance = 0.70,     
+	Cooldown = 3.0,         
+	DodgeForce = 12,        
+	DodgeDuration = 0.15    
+}
+
+local canDodgeSelf = true
+local lastDodgeTime = 0
+
+-- Animaciones actualizadas más realistas
+local DodgeAnimationIds = {
+	"rbxassetid://132266728249440",
+	"rbxassetid://107901103720798"
+}
+
+local function playRandomDodgeAnim()
+	if #DodgeAnimationIds == 0 or not animator then return end
+	
+	local randomId = DodgeAnimationIds[math.random(1, #DodgeAnimationIds)]
+	local animObj = Instance.new("Animation")
+	animObj.AnimationId = randomId
+	
+	local track = animator:LoadAnimation(animObj)
+	track.Priority = Enum.AnimationPriority.Action
+	track:Play()
+end
 
 local getHuiFunction = gethui or function() return player:WaitForChild("PlayerGui") end
 local targetGuiParent = getHuiFunction()
@@ -18,6 +54,17 @@ local targetGuiParent = getHuiFunction()
 if targetGuiParent:FindFirstChild("LurkerControlGui") then
 	targetGuiParent.LurkerControlGui:Destroy()
 end
+
+local MovementConfig = {
+	PatrolSpeed   = 9.5,   
+	CombatSpeed   = 11.5,  
+	TurnSpeed     = 2.5,   
+	AgentRadius   = 3.5,   
+	AgentHeight   = 5.0,
+	AgentCanJump  = false  
+}
+
+local originalWalkSpeed = humanoid.WalkSpeed
 
 local WeaponRegistry = {
 	["A9 Brigadier"]     = { FireRate = 0.25, KeepDistance = 18, AutoADS = true },
@@ -33,33 +80,203 @@ local WeaponRegistry = {
 }
 
 local DefaultWeaponSettings = { FireRate = 0.15, KeepDistance = 16, AutoADS = true }
-
 local currentWeaponName = "None"
 local activeFireRate = DefaultWeaponSettings.FireRate
-local optimalKeepDistance = DefaultWeaponSettings.KeepDistance
-local weaponAllowsADS = DefaultWeaponSettings.AutoADS
+local activeKeepDistance = DefaultWeaponSettings.KeepDistance
 
 local VisualConfig = {
-	FieldOfView = 90,        
-	ViewDistance = 45,       
+	FieldOfView = 95,        
+	ViewDistance = 75,       
 }
 
-local targetPosition = rootPart.Position
-local isResting = false
-local restTimer = 0
-local dangerousZones = {} 
+local currentWaypoints = {}
+local currentWaypointIndex = 1
 
 local currentEnemyTarget = nil
-local combatScanRange = 45 
+local combatScanRange = 75 
 local lastRangedShotTime = 0
 local lastBashTime = 0
 local bashCooldown = 1.2
-local internalManualHandover = false 
 
 local lastKnownHealth = humanoid.Health
 local overrideActive = false
 local leftLaserPart = nil
 local rightLaserPart = nil
+
+local lastPositionCheck = Vector3.zero
+local stuckTimer = 0
+local pathLifeTimer = 0 
+
+local pathCache = {}
+
+local function executeSelfDodge()
+	if not canDodgeSelf or not rootPart then return end
+	canDodgeSelf = false
+	
+	local oldVel = rootPart:FindFirstChild("Ramirez_DodgeVel")
+	if oldVel then oldVel:Destroy() end
+
+	local isLeft = math.random() > 0.5
+	local directionVector = isLeft and -rootPart.CFrame.RightVector or rootPart.CFrame.RightVector
+
+	local dodgeVel = Instance.new("BodyVelocity")
+	dodgeVel.Name = "Ramirez_DodgeVel"
+	dodgeVel.MaxForce = Vector3.new(math.huge, 0, math.huge)
+	dodgeVel.Velocity = (directionVector * SelfDodgeConfig.DodgeForce) + (rootPart.CFrame.LookVector * 4)
+	dodgeVel.Parent = rootPart
+
+	playRandomDodgeAnim()
+
+	task.delay(SelfDodgeConfig.DodgeDuration, function()
+		if dodgeVel and dodgeVel.Parent then
+			dodgeVel:Destroy()
+		end
+	end)
+
+	task.delay(SelfDodgeConfig.Cooldown, function()
+		canDodgeSelf = true
+	end)
+end
+
+local function triggerBash()
+	if os.clock() - lastBashTime >= bashCooldown then
+		lastBashTime = os.clock()
+		task.spawn(function()
+			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
+			task.wait(0.05)
+			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
+		end)
+	end
+end
+
+local function isMeleeEnemyNearby(radius)
+	radius = radius or 12
+	local boxParams = OverlapParams.new()
+	boxParams.FilterType = Enum.RaycastFilterType.Exclude
+	boxParams.FilterDescendantsInstances = {character, leftLaserPart, rightLaserPart}
+	
+	local nearbyParts = Workspace:GetPartBoundsInBox(rootPart.CFrame, Vector3.new(radius, 10, radius), boxParams)
+	for _, part in ipairs(nearbyParts) do
+		local model = part.Parent
+		if model and model:IsA("Model") and model ~= character then
+			local hum = model:FindFirstChildOfClass("Humanoid")
+			local root = model:FindFirstChild("HumanoidRootPart") or model:FindFirstChild("Torso")
+			if hum and hum.Health > 0 and root then
+				local isRanged = model:FindFirstChildOfClass("Tool") ~= nil or model.Name:find("Gilbert") or model.Name:find("Gunner")
+				if not isRanged then
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function getCacheKey(startPos, endPos)
+	return string.format("%.1f_%.1f_%.1f_%.1f_%.1f_%.1f", startPos.X, startPos.Y, startPos.Z, endPos.X, endPos.Y, endPos.Z)
+end
+
+local function getCachedWaypoints(startPos, endPos)
+	local key = getCacheKey(startPos, endPos)
+	local cached = pathCache[key]
+	if cached and (os.clock() - cached.time < 3) then
+		return cached.waypoints
+	end
+	return nil
+end
+
+local function setCachedWaypoints(startPos, endPos, waypoints)
+	local key = getCacheKey(startPos, endPos)
+	pathCache[key] = {
+		waypoints = waypoints,
+		time = os.clock()
+	}
+end
+
+local function renderDebugWaypoints(waypoints)
+	if not getgenv().Ramirez_ShowWaypoints then return end
+	for i, wp in ipairs(waypoints) do
+		local sphere = Instance.new("Part")
+		sphere.Name = "Ramirez_WaypointNode"
+		sphere.Size = Vector3.new(0.4, 0.4, 0.4)
+		sphere.Shape = Enum.PartType.Ball
+		sphere.Material = Enum.Material.Neon
+		sphere.Anchored = true
+		sphere.CanCollide = false
+		sphere.Position = wp.Position
+		
+		if i == #waypoints then
+			sphere.Color = Color3.fromRGB(0, 255, 120) 
+		else
+			sphere.Color = Color3.fromRGB(255, 160, 30) 
+		end
+		
+		sphere.Parent = Workspace
+		Debris:AddItem(sphere, 2.5)
+	end
+end
+
+local function generatePathTo(destination)
+	pathLifeTimer = 0 
+	
+	local cachedWps = getCachedWaypoints(rootPart.Position, destination)
+	if cachedWps then
+		currentWaypoints = cachedWps
+		currentWaypointIndex = 2
+		return
+	end
+
+	local path = PathfindingService:CreatePath({
+		AgentRadius = MovementConfig.AgentRadius,
+		AgentHeight = MovementConfig.AgentHeight,
+		AgentCanJump = MovementConfig.AgentCanJump
+	})
+
+	local success, err = pcall(function()
+		path:ComputeAsync(rootPart.Position, destination)
+	end)
+
+	if success and path.Status == Enum.PathStatus.Success then
+		currentWaypoints = path:GetWaypoints()
+		currentWaypointIndex = 2
+		setCachedWaypoints(rootPart.Position, destination, currentWaypoints)
+		renderDebugWaypoints(currentWaypoints)
+	else
+		currentWaypoints = {}
+		currentWaypointIndex = 1
+	end
+end
+
+local function findPatrolDestination()
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = {character, leftLaserPart, rightLaserPart}
+	
+	local origin = rootPart.Position
+	local currentForward = rootPart.CFrame.LookVector
+
+	local bestPoint = nil
+	local maxDistance = 0
+
+	for i = -6, 6 do
+		local angle = math.rad(i * 20)
+		local dir = (CFrame.new(Vector3.zero, currentForward) * CFrame.Angles(0, angle, 0)).LookVector
+		
+		local ray = Workspace:Raycast(origin, dir * 100, rayParams)
+		local dist = ray and (ray.Position - origin).Magnitude or 100
+
+		if dist > maxDistance and dist > 15 then
+			maxDistance = dist
+			bestPoint = origin + dir * (dist - 6)
+		end
+	end
+
+	if not bestPoint then
+		bestPoint = origin + (CFrame.Angles(0, math.rad(math.random(-180, 180)), 0) * currentForward) * 40
+	end
+
+	generatePathTo(bestPoint)
+end
 
 local function scanEquippedWeapon()
 	if not character then return end
@@ -81,37 +298,26 @@ local function scanEquippedWeapon()
 			local registryData = WeaponRegistry[name]
 			if registryData then
 				activeFireRate = registryData.FireRate
-				optimalKeepDistance = registryData.KeepDistance
-				weaponAllowsADS = registryData.AutoADS
+				activeKeepDistance = registryData.KeepDistance
 			else
 				activeFireRate = DefaultWeaponSettings.FireRate
-				optimalKeepDistance = DefaultWeaponSettings.KeepDistance
-				weaponAllowsADS = DefaultWeaponSettings.AutoADS
+				activeKeepDistance = DefaultWeaponSettings.KeepDistance
 			end
 		end
 	else
 		if currentWeaponName ~= "None" then
 			currentWeaponName = "None"
 			activeFireRate = DefaultWeaponSettings.FireRate
-			optimalKeepDistance = DefaultWeaponSettings.KeepDistance
-			weaponAllowsADS = DefaultWeaponSettings.AutoADS
+			activeKeepDistance = DefaultWeaponSettings.KeepDistance
 		end
 	end
 end
 
-local function isPlayerMovingInput()
-	return humanoid.MoveDirection.Magnitude > 0.1
-end
-
-local function triggerBash()
-	if os.clock() - lastBashTime >= bashCooldown then
-		lastBashTime = os.clock()
-		task.spawn(function()
-			VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.G, false, game)
-			task.wait(0.05)
-			VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.G, false, game)
-		end)
-	end
+local function isPlayerPressingMovementKeys()
+	return UserInputService:IsKeyDown(Enum.KeyCode.W) 
+		or UserInputService:IsKeyDown(Enum.KeyCode.A) 
+		or UserInputService:IsKeyDown(Enum.KeyCode.S) 
+		or UserInputService:IsKeyDown(Enum.KeyCode.D)
 end
 
 local function updateVisionLasers()
@@ -192,38 +398,12 @@ local function isTargetInRamirezCone(enemyRoot)
 	return false
 end
 
-local function calculateSmartLurkerPath()
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = {character, leftLaserPart, rightLaserPart}
-	local origin = rootPart.Position + Vector3.new(0, 0.5, 0)
-	local validOptions = {}
-	
-	for i = 1, 12 do
-		local angle = math.rad(i * 30)
-		local direction = Vector3.new(math.cos(angle), 0, math.sin(angle)).Unit
-		local ray = Workspace:Raycast(origin, direction * 45, rayParams)
-		local dist = ray and (ray.Position - rootPart.Position).Magnitude or 45
-		
-		if dist > 12 then
-			local potentialPoint = rootPart.Position + direction * (dist - 4)
-			local isSafe = true
-			for dangerPos, _ in pairs(dangerousZones) do
-				if (potentialPoint - dangerPos).Magnitude < 25 then 
-					isSafe = false
-					break
-				end
-			end
-			if isSafe then table.insert(validOptions, potentialPoint) end
-		end
-	end
-	return #validOptions > 0 and validOptions[math.random(1, #validOptions)] or (rootPart.Position + rootPart.CFrame.LookVector * 15)
-end
-
--- ==================== DISEÑO V6.6 CON PESTAÑA CHANGELOG ====================
+-- GUI Interface
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "LurkerControlGui"
 screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 999
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 screenGui.Parent = targetGuiParent
 
 local mainFrame = Instance.new("Frame")
@@ -233,6 +413,7 @@ mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 14)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
 mainFrame.Draggable = true
+mainFrame.ZIndex = 10
 mainFrame.Parent = screenGui
 
 local mainCorner = Instance.new("UICorner")
@@ -244,11 +425,11 @@ mainStroke.Color = Color3.fromRGB(45, 48, 56)
 mainStroke.Thickness = 1
 mainStroke.Parent = mainFrame
 
--- Header
 local headerFrame = Instance.new("Frame")
 headerFrame.Size = UDim2.new(1, 0, 0, 36)
 headerFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 headerFrame.BorderSizePixel = 0
+headerFrame.ZIndex = 11
 headerFrame.Parent = mainFrame
 
 local headerCorner = Instance.new("UICorner")
@@ -259,11 +440,12 @@ local titleLabel = Instance.new("TextLabel")
 titleLabel.Size = UDim2.new(1, -40, 1, 0)
 titleLabel.Position = UDim2.new(0, 12, 0, 0)
 titleLabel.BackgroundTransparency = 1
-titleLabel.Text = "RAMIREZ AI • V6.6"
+titleLabel.Text = "RAMIREZ AI • V10.5"
 titleLabel.TextColor3 = Color3.fromRGB(240, 80, 80)
 titleLabel.TextSize = 13
 titleLabel.Font = Enum.Font.Code
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.ZIndex = 12
 titleLabel.Parent = headerFrame
 
 local minimizeButton = Instance.new("TextButton")
@@ -274,17 +456,17 @@ minimizeButton.Text = "−"
 minimizeButton.TextColor3 = Color3.fromRGB(180, 180, 180)
 minimizeButton.TextSize = 18
 minimizeButton.Font = Enum.Font.SourceSansBold
+minimizeButton.ZIndex = 12
 minimizeButton.Parent = headerFrame
 
--- Content Body
 local contentFrame = Instance.new("Frame")
 contentFrame.Name = "ContentFrame"
 contentFrame.Size = UDim2.new(1, -20, 1, -48)
 contentFrame.Position = UDim2.new(0, 10, 0, 42)
 contentFrame.BackgroundTransparency = 1
+contentFrame.ZIndex = 11
 contentFrame.Parent = mainFrame
 
--- System Toggle Button
 local toggleButton = Instance.new("TextButton")
 toggleButton.Size = UDim2.new(1, 0, 0, 36)
 toggleButton.Position = UDim2.new(0, 0, 0, 0)
@@ -293,6 +475,7 @@ toggleButton.Text = "SYSTEM: DISABLED"
 toggleButton.TextColor3 = Color3.fromRGB(220, 90, 90)
 toggleButton.TextSize = 13
 toggleButton.Font = Enum.Font.SourceSansBold
+toggleButton.ZIndex = 12
 toggleButton.Parent = contentFrame
 
 local buttonCorner = Instance.new("UICorner")
@@ -304,11 +487,11 @@ buttonStroke.Color = Color3.fromRGB(90, 35, 35)
 buttonStroke.Thickness = 1
 buttonStroke.Parent = toggleButton
 
--- Status Display
 local statusFrame = Instance.new("Frame")
 statusFrame.Size = UDim2.new(1, 0, 0, 26)
 statusFrame.Position = UDim2.new(0, 0, 0, 42)
 statusFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+statusFrame.ZIndex = 11
 statusFrame.Parent = contentFrame
 
 local statusCorner = Instance.new("UICorner")
@@ -324,13 +507,14 @@ statusLabel.TextColor3 = Color3.fromRGB(140, 145, 155)
 statusLabel.TextSize = 11
 statusLabel.Font = Enum.Font.Code
 statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.ZIndex = 12
 statusLabel.Parent = statusFrame
 
--- Weapon Display
 local weaponFrame = Instance.new("Frame")
 weaponFrame.Size = UDim2.new(1, 0, 0, 26)
 weaponFrame.Position = UDim2.new(0, 0, 0, 74)
 weaponFrame.BackgroundColor3 = Color3.fromRGB(22, 18, 28)
+weaponFrame.ZIndex = 11
 weaponFrame.Parent = contentFrame
 
 local weaponCorner = Instance.new("UICorner")
@@ -346,9 +530,9 @@ weaponLabel.TextColor3 = Color3.fromRGB(185, 140, 245)
 weaponLabel.TextSize = 11
 weaponLabel.Font = Enum.Font.Code
 weaponLabel.TextXAlignment = Enum.TextXAlignment.Left
+weaponLabel.ZIndex = 12
 weaponLabel.Parent = weaponFrame
 
--- FOV Laser Toggle
 local fovToggleButton = Instance.new("TextButton")
 fovToggleButton.Size = UDim2.new(1, 0, 0, 26)
 fovToggleButton.Position = UDim2.new(0, 0, 0, 106)
@@ -357,17 +541,33 @@ fovToggleButton.Text = "FOV CONE: ACTIVE"
 fovToggleButton.TextColor3 = Color3.fromRGB(100, 160, 245)
 fovToggleButton.TextSize = 11
 fovToggleButton.Font = Enum.Font.SourceSansBold
+fovToggleButton.ZIndex = 12
 fovToggleButton.Parent = contentFrame
 
 local fovCorner = Instance.new("UICorner")
 fovCorner.CornerRadius = UDim.new(0, 5)
 fovCorner.Parent = fovToggleButton
 
--- Speed Controller Section
+local waypointsToggleButton = Instance.new("TextButton")
+waypointsToggleButton.Size = UDim2.new(1, 0, 0, 26)
+waypointsToggleButton.Position = UDim2.new(0, 0, 0, 138)
+waypointsToggleButton.BackgroundColor3 = Color3.fromRGB(20, 32, 28)
+waypointsToggleButton.Text = "PATH NODES: VISIBLE"
+waypointsToggleButton.TextColor3 = Color3.fromRGB(80, 220, 150)
+waypointsToggleButton.TextSize = 11
+waypointsToggleButton.Font = Enum.Font.SourceSansBold
+waypointsToggleButton.ZIndex = 12
+waypointsToggleButton.Parent = contentFrame
+
+local waypointsCorner = Instance.new("UICorner")
+waypointsCorner.CornerRadius = UDim.new(0, 5)
+waypointsCorner.Parent = waypointsToggleButton
+
 local speedFrame = Instance.new("Frame")
 speedFrame.Size = UDim2.new(1, 0, 0, 32)
-speedFrame.Position = UDim2.new(0, 0, 0, 138)
+speedFrame.Position = UDim2.new(0, 0, 0, 170)
 speedFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+speedFrame.ZIndex = 11
 speedFrame.Parent = contentFrame
 
 local speedCorner = Instance.new("UICorner")
@@ -378,11 +578,12 @@ local speedLabel = Instance.new("TextLabel")
 speedLabel.Size = UDim2.new(0.6, 0, 1, 0)
 speedLabel.Position = UDim2.new(0, 8, 0, 0)
 speedLabel.BackgroundTransparency = 1
-speedLabel.Text = "Anim Speed: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+speedLabel.Text = "Anim Speed: " .. string.format("%.2f", getgenv().GilbertFootSpeed)
 speedLabel.TextColor3 = Color3.fromRGB(180, 185, 195)
 speedLabel.TextSize = 11
 speedLabel.Font = Enum.Font.Code
 speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.ZIndex = 12
 speedLabel.Parent = speedFrame
 
 local minusButton = Instance.new("TextButton")
@@ -393,6 +594,7 @@ minusButton.Text = "-"
 minusButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 minusButton.TextSize = 14
 minusButton.Font = Enum.Font.SourceSansBold
+minusButton.ZIndex = 12
 minusButton.Parent = speedFrame
 
 local minusCorner = Instance.new("UICorner")
@@ -407,56 +609,91 @@ plusButton.Text = "+"
 plusButton.TextColor3 = Color3.fromRGB(220, 220, 220)
 plusButton.TextSize = 14
 plusButton.Font = Enum.Font.SourceSansBold
+plusButton.ZIndex = 12
 plusButton.Parent = speedFrame
 
 local plusCorner = Instance.new("UICorner")
 plusCorner.CornerRadius = UDim.new(0, 4)
 plusCorner.Parent = plusButton
 
--- Pestaña / Caja de Changelog
-local changelogFrame = Instance.new("Frame")
-changelogFrame.Size = UDim2.new(1, 0, 0, 242)
-changelogFrame.Position = UDim2.new(0, 0, 0, 178)
-changelogFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 12)
-changelogFrame.BorderSizePixel = 0
-changelogFrame.Parent = contentFrame
+--------------------------------------------------------------------------------
+-- SECCIÓN DE CHANGELOG INTEGRADO EN LA PARTE INFERIOR
+--------------------------------------------------------------------------------
+local changelogContainer = Instance.new("Frame")
+changelogContainer.Size = UDim2.new(1, 0, 0, 215)
+changelogContainer.Position = UDim2.new(0, 0, 0, 210)
+changelogContainer.BackgroundColor3 = Color3.fromRGB(16, 16, 20)
+changelogContainer.BorderSizePixel = 0
+changelogContainer.ZIndex = 11
+changelogContainer.Parent = contentFrame
 
 local changelogCorner = Instance.new("UICorner")
 changelogCorner.CornerRadius = UDim.new(0, 6)
-changelogCorner.Parent = changelogFrame
+changelogCorner.Parent = changelogContainer
 
 local changelogStroke = Instance.new("UIStroke")
-changelogStroke.Color = Color3.fromRGB(30, 32, 38)
+changelogStroke.Color = Color3.fromRGB(35, 38, 45)
 changelogStroke.Thickness = 1
-changelogStroke.Parent = changelogFrame
+changelogStroke.Parent = changelogContainer
 
 local changelogTitle = Instance.new("TextLabel")
-changelogTitle.Size = UDim2.new(1, -12, 0, 22)
-changelogTitle.Position = UDim2.new(0, 8, 0, 4)
+changelogTitle.Size = UDim2.new(1, -12, 0, 24)
+changelogTitle.Position = UDim2.new(0, 8, 0, 2)
 changelogTitle.BackgroundTransparency = 1
-changelogTitle.Text = "📋 CHANGELOG LOGS"
-changelogTitle.TextColor3 = Color3.fromRGB(200, 80, 80)
-changelogTitle.TextSize = 10
+changelogTitle.Text = "CHANGELOG • V10.5"
+changelogTitle.TextColor3 = Color3.fromRGB(245, 170, 70)
+changelogTitle.TextSize = 11
 changelogTitle.Font = Enum.Font.Code
 changelogTitle.TextXAlignment = Enum.TextXAlignment.Left
-changelogTitle.Parent = changelogFrame
+changelogTitle.ZIndex = 12
+changelogTitle.Parent = changelogContainer
 
-local changelogLog = Instance.new("TextLabel")
-changelogLog.Size = UDim2.new(1, -16, 1, -28)
-changelogLog.Position = UDim2.new(0, 8, 0, 26)
-changelogLog.BackgroundTransparency = 1
-changelogLog.Text = "[V6.6 / V6.5 Updates]\n• GUI Restored: Re-added Changelog box with dynamic updates.\n• Instant Disengage: WASD keypress immediately clears lock-on.\n\n[V6.4 Updates]\n• Speed Fix: Switched back to MoveTo() for natural walking speed.\n• Auto Bash: Auto-triggers G key on unexpected damage.\n\n[V6.3 Updates]\n• Weapon scan adjustments and priority tuning."
-changelogLog.TextColor3 = Color3.fromRGB(150, 155, 165)
-changelogLog.TextSize = 10
-changelogLog.Font = Enum.Font.Code
-changelogLog.TextWrapped = true
-changelogLog.TextYAlignment = Enum.TextYAlignment.Top
-changelogLog.TextXAlignment = Enum.TextXAlignment.Left
-changelogLog.Parent = changelogFrame
+local changelogScroll = Instance.new("ScrollingFrame")
+changelogScroll.Size = UDim2.new(1, -12, 1, -30)
+changelogScroll.Position = UDim2.new(0, 6, 0, 26)
+changelogScroll.BackgroundTransparency = 1
+changelogScroll.BorderSizePixel = 0
+changelogScroll.ScrollBarThickness = 3
+changelogScroll.ScrollBarImageColor3 = Color3.fromRGB(70, 75, 90)
+changelogScroll.CanvasSize = UDim2.new(0, 0, 0, 0) -- Se ajusta dinámicamente por UIListLayout
+changelogScroll.ZIndex = 12
+changelogScroll.Parent = changelogContainer
 
--- Minimized Behavior
+local changelogListLayout = Instance.new("UIListLayout")
+changelogListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+changelogListLayout.Padding = UDim.new(0, 4)
+changelogListLayout.Parent = changelogScroll
+
+changelogListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	changelogScroll.CanvasSize = UDim2.new(0, 0, 0, changelogListLayout.AbsoluteContentSize.Y + 6)
+end)
+
+local function addChangelogEntry(text, color)
+	local entryLabel = Instance.new("TextLabel")
+	entryLabel.Size = UDim2.new(1, -6, 0, 0)
+	entryLabel.AutomaticSize = Enum.AutomaticSize.Y
+	entryLabel.BackgroundTransparency = 1
+	entryLabel.Text = text
+	entryLabel.TextColor3 = color or Color3.fromRGB(170, 175, 185)
+	entryLabel.TextSize = 10
+	entryLabel.Font = Enum.Font.Code
+	entryLabel.TextXAlignment = Enum.TextXAlignment.Left
+	entryLabel.TextWrapped = true
+	entryLabel.ZIndex = 13
+	entryLabel.Parent = changelogScroll
+end
+
+-- Contenido del Changelog para la V10.5
+addChangelogEntry("[+] Smart Melee Bash: Ahora solo se ejecuta si hay enemigos cuerpo a cuerpo/infectados a ≤12 studs.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Distance Fix: Al recibir daño a distancia (disparos), prioriza maniobras de esquive en lugar de golpear al aire.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Realistic Animations: Actualizadas las animaciones de esquive por secuencias más fluidas y realistas.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Anti-Stuck & Pathing: Sistema de caché para 3s y re-calculado automático de nodos de patrullaje.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[*] Combat Prediction: Lead targeting optimizado para enemigos con velocidad lineal incrementada o que realizan dodge.", Color3.fromRGB(245, 190, 90))
+addChangelogEntry("[*] UI Enhancements: Integrado panel visual de changelog en gethui.", Color3.fromRGB(245, 190, 90))
+--------------------------------------------------------------------------------
+
 local isMinimized = false
-minimizeButton.MouseButton1Click:Connect(function()
+minimizeButton.Activated:Connect(function()
 	isMinimized = not isMinimized
 	if isMinimized then
 		mainFrame.Size = UDim2.new(0, 260, 0, 36)
@@ -469,7 +706,7 @@ minimizeButton.MouseButton1Click:Connect(function()
 	end
 end)
 
-fovToggleButton.MouseButton1Click:Connect(function()
+fovToggleButton.Activated:Connect(function()
 	getgenv().Ramirez_ShowFOV = not getgenv().Ramirez_ShowFOV
 	if getgenv().Ramirez_ShowFOV then
 		fovToggleButton.Text = "FOV CONE: ACTIVE"
@@ -484,27 +721,41 @@ fovToggleButton.MouseButton1Click:Connect(function()
 	end
 end)
 
-minusButton.MouseButton1Click:Connect(function()
-	if getgenv().GilbertFootSpeed > 0.5 then
-		getgenv().GilbertFootSpeed = math.max(0.5, getgenv().GilbertFootSpeed - 0.1)
-		speedLabel.Text = "Anim Speed: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+waypointsToggleButton.Activated:Connect(function()
+	getgenv().Ramirez_ShowWaypoints = not getgenv().Ramirez_ShowWaypoints
+	if getgenv().Ramirez_ShowWaypoints then
+		waypointsToggleButton.Text = "PATH NODES: VISIBLE"
+		waypointsToggleButton.BackgroundColor3 = Color3.fromRGB(20, 32, 28)
+		waypointsToggleButton.TextColor3 = Color3.fromRGB(80, 220, 150)
+	else
+		waypointsToggleButton.Text = "PATH NODES: HIDDEN"
+		waypointsToggleButton.BackgroundColor3 = Color3.fromRGB(22, 22, 24)
+		waypointsToggleButton.TextColor3 = Color3.fromRGB(120, 120, 120)
 	end
 end)
 
-plusButton.MouseButton1Click:Connect(function()
-	if getgenv().GilbertFootSpeed < 5.0 then
-		getgenv().GilbertFootSpeed = math.min(5.0, getgenv().GilbertFootSpeed + 0.1)
-		speedLabel.Text = "Anim Speed: " .. string.format("%.1f", getgenv().GilbertFootSpeed)
+minusButton.Activated:Connect(function()
+	if getgenv().GilbertFootSpeed > 0.3 then
+		getgenv().GilbertFootSpeed = math.max(0.3, getgenv().GilbertFootSpeed - 0.05)
+		speedLabel.Text = "Anim Speed: " .. string.format("%.2f", getgenv().GilbertFootSpeed)
+	end
+end)
+
+plusButton.Activated:Connect(function()
+	if getgenv().GilbertFootSpeed < 3.0 then
+		getgenv().GilbertFootSpeed = math.min(3.0, getgenv().GilbertFootSpeed + 0.05)
+		speedLabel.Text = "Anim Speed: " .. string.format("%.2f", getgenv().GilbertFootSpeed)
 	end
 end)
 
 local function disableSystemFully()
 	getgenv().LurkerAI_Enabled = false
+	humanoid.WalkSpeed = originalWalkSpeed
+	humanoid:MoveTo(rootPart.Position)
 	toggleButton.Text = "SYSTEM: DISABLED"
 	toggleButton.BackgroundColor3 = Color3.fromRGB(30, 22, 24)
 	toggleButton.TextColor3 = Color3.fromRGB(220, 90, 90)
 	buttonStroke.Color = Color3.fromRGB(90, 35, 35)
-	isResting = false
 	currentEnemyTarget = nil
 	overrideActive = false
 	
@@ -513,28 +764,35 @@ local function disableSystemFully()
 end
 
 humanoid.HealthChanged:Connect(function(currentHealth)
-	if not getgenv().LurkerAI_Enabled or internalManualHandover then 
+	if not getgenv().LurkerAI_Enabled then 
 		lastKnownHealth = currentHealth
 		return 
 	end
 	if currentHealth < lastKnownHealth and currentHealth > 0 then
 		lastKnownHealth = currentHealth
-		triggerBash()
-		statusLabel.Text = "Status: AMBUSH DETECTED!"
+		
+		if isMeleeEnemyNearby(12) then
+			triggerBash()
+		end
+		
+		if SelfDodgeConfig.Enabled and math.random() < SelfDodgeConfig.DodgeChance then
+			executeSelfDodge()
+		end
+
+		statusLabel.Text = "Status: TAKING DAMAGE / EVADING"
 		statusLabel.TextColor3 = Color3.fromRGB(255, 60, 80)
 	else
 		lastKnownHealth = currentHealth
 	end
 end)
 
-toggleButton.MouseButton1Click:Connect(function()
+toggleButton.Activated:Connect(function()
 	if getgenv().LurkerAI_Enabled then
 		disableSystemFully()
 		statusLabel.Text = "Status: Manual Control"
 		statusLabel.TextColor3 = Color3.fromRGB(140, 145, 155)
 	else
 		getgenv().LurkerAI_Enabled = true
-		internalManualHandover = false
 		overrideActive = false
 		lastKnownHealth = humanoid.Health
 		toggleButton.Text = "SYSTEM: ACTIVE"
@@ -544,21 +802,18 @@ toggleButton.MouseButton1Click:Connect(function()
 		statusLabel.Text = "Status: Sweeping..."
 		statusLabel.TextColor3 = Color3.fromRGB(90, 220, 110)
 		
-		dangerousZones = {}
-		isResting = false
 		currentEnemyTarget = nil
-		targetPosition = calculateSmartLurkerPath()
+		findPatrolDestination()
 	end
 end)
 
--- Main Scanner Loop
 task.spawn(function()
 	while true do
 		task.wait(0.1) 
 		scanEquippedWeapon() 
 		weaponLabel.Text = "Weapon: " .. currentWeaponName
 		
-		if getgenv().LurkerAI_Enabled and character and character:FindFirstChild("HumanoidRootPart") and not internalManualHandover then
+		if getgenv().LurkerAI_Enabled and character and character:FindFirstChild("HumanoidRootPart") then
 			if currentEnemyTarget and currentEnemyTarget.Parent and currentEnemyTarget.Parent:FindFirstChildOfClass("Humanoid") then
 				local hum = currentEnemyTarget.Parent:FindFirstChildOfClass("Humanoid")
 				local dist = (rootPart.Position - currentEnemyTarget.Position).Magnitude
@@ -600,15 +855,12 @@ task.spawn(function()
 				end
 				currentEnemyTarget = closestEnemy
 			end
-		elseif not getgenv().LurkerAI_Enabled or internalManualHandover then
-			currentEnemyTarget = nil
 		end
 	end
 end)
 
--- Main Movement & Action Loop
 RunService.Heartbeat:Connect(function(deltaTime)
-	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 or internalManualHandover then 
+	if not getgenv().LurkerAI_Enabled or not humanoid or humanoid.Health <= 0 then 
 		if leftLaserPart then leftLaserPart:Destroy() leftLaserPart = nil end
 		if rightLaserPart then rightLaserPart:Destroy() rightLaserPart = nil end
 		return 
@@ -616,8 +868,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 	
 	updateVisionLasers()
 	
-	-- CANCELACIÓN INMEDIATA POR MOVIMIENTO MANUAL (WASD)
-	if isPlayerMovingInput() then
+	if isPlayerPressingMovementKeys() then
 		overrideActive = true 
 		currentEnemyTarget = nil 
 		statusLabel.Text = "Status: Manual Override"
@@ -625,43 +876,79 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return 
 	end
 
-	if overrideActive and not isPlayerMovingInput() then
+	if overrideActive and not isPlayerPressingMovementKeys() then
 		overrideActive = false
-		isResting = false
-		targetPosition = calculateSmartLurkerPath() 
+		findPatrolDestination()
 		statusLabel.Text = "Status: Resuming Patrol"
 		statusLabel.TextColor3 = Color3.fromRGB(245, 180, 80)
 		return
 	end
 
-	-- MODO COMBATE
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if animator then
+		for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+			if track.Name == "WalkAnim" or track.Name == "RunAnim" or string.find(string.lower(track.Name), "walk") or string.find(string.lower(track.Name), "run") then
+				track:AdjustSpeed(getgenv().GilbertFootSpeed)
+			end
+		end
+	end
+
+	pathLifeTimer = pathLifeTimer + deltaTime
+
+	if (rootPart.Position - lastPositionCheck).Magnitude < 0.15 then
+		stuckTimer = stuckTimer + deltaTime
+		if stuckTimer > 0.6 then
+			findPatrolDestination() 
+			stuckTimer = 0
+		end
+	else
+		stuckTimer = 0
+		lastPositionCheck = rootPart.Position
+	end
+
+	if pathLifeTimer > 4.5 then
+		findPatrolDestination()
+	end
+
 	if currentEnemyTarget and currentEnemyTarget.Parent then
-		local enemyPos = currentEnemyTarget.Position
-		local distanceToEnemy = (rootPart.Position - enemyPos).Magnitude
+		humanoid.WalkSpeed = MovementConfig.CombatSpeed
+		
+		local enemyModel = currentEnemyTarget.Parent
+		local isRangedEnemy = enemyModel:FindFirstChildOfClass("Tool") ~= nil or enemyModel.Name:find("Gilbert") or enemyModel.Name:find("Gunner")
+		
+		local enemyVelocity = currentEnemyTarget.AssemblyLinearVelocity or Vector3.zero
+		local isDodging = currentEnemyTarget:FindFirstChild("DodgeVelocity") or currentEnemyTarget:FindFirstChild("ReturnVelocity")
+		
+		local targetAimPosition = currentEnemyTarget.Position
+		
+		if (isRangedEnemy and enemyVelocity.Magnitude > 2) or isDodging then
+			targetAimPosition = targetAimPosition + (enemyVelocity * 0.14)
+		end
+
+		local distanceToEnemy = (rootPart.Position - targetAimPosition).Magnitude
 		
 		if distanceToEnemy > combatScanRange then
 			currentEnemyTarget = nil
 			return
 		end
 		
-		statusLabel.Text = "Status: Engaged (" .. string.upper(currentWeaponName) .. ")"
-		statusLabel.TextColor3 = Color3.fromRGB(255, 70, 70)
+		statusLabel.Text = "Status: Engaged (" .. (isRangedEnemy and "PRIORITY: RANGED" or "MELEE INFECTED") .. ")"
+		statusLabel.TextColor3 = isRangedEnemy and Color3.fromRGB(255, 50, 50) or Color3.fromRGB(255, 150, 50)
 		
-		if distanceToEnemy <= 7 then
+		if not isRangedEnemy and distanceToEnemy <= 8.5 then
 			triggerBash()
 		end
 
-		local lookTarget = Vector3.new(enemyPos.X, rootPart.Position.Y, enemyPos.Z)
-		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), 20 * deltaTime)
-		
-		if distanceToEnemy > (optimalKeepDistance + 3) then
-			humanoid:MoveTo(enemyPos)
-		elseif distanceToEnemy < (optimalKeepDistance - 3) then
-			local backPos = rootPart.Position - (enemyPos - rootPart.Position).Unit * 10
-			humanoid:MoveTo(backPos)
+		local desiredDistance = isRangedEnemy and activeKeepDistance or 8.0
+		if distanceToEnemy < desiredDistance - 2 then
+			humanoid:MoveTo(rootPart.Position - (targetAimPosition - rootPart.Position).Unit * 4)
 		else
-			humanoid:MoveTo(rootPart.Position)
+			humanoid:MoveTo(targetAimPosition)
 		end
+
+		local lookTarget = Vector3.new(targetAimPosition.X, rootPart.Position.Y, targetAimPosition.Z)
+		local smoothTurn = isDodging and (MovementConfig.TurnSpeed * 1.8) or MovementConfig.TurnSpeed
+		rootPart.CFrame = rootPart.CFrame:Lerp(CFrame.lookAt(rootPart.Position, lookTarget), math.clamp(smoothTurn * deltaTime, 0, 1))
 
 		if os.clock() - lastRangedShotTime >= activeFireRate then
 			lastRangedShotTime = os.clock()
@@ -674,42 +961,30 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		return
 	end
 
-	-- MODO PATRULLA
-	if isResting then
-		restTimer = restTimer - deltaTime
-		statusLabel.Text = "Status: Pause (" .. string.format("%.1f", restTimer) .. "s)"
-		statusLabel.TextColor3 = Color3.fromRGB(235, 190, 80)
-		if restTimer <= 0 then
-			isResting = false
-			targetPosition = calculateSmartLurkerPath()
-		end
-		humanoid:MoveTo(rootPart.Position)
-		return
-	end
-	
-	local flatChar = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
-	local flatTarget = Vector3.new(targetPosition.X, 0, targetPosition.Z)
-	local distance = (flatChar - flatTarget).Magnitude
-	
-	if distance > 3.5 then
-		statusLabel.Text = "Status: Sweeping..."
-		statusLabel.TextColor3 = Color3.fromRGB(90, 220, 110)
-		
-		humanoid:MoveTo(targetPosition)
-		
-		local animator = humanoid:FindFirstChildOfClass("Animator")
-		if animator then
-			for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-				if track.Name == "WalkAnim" or track.Name == "RunAnim" or string.find(string.lower(track.Name), "walk") or string.find(string.lower(track.Name), "run") then
-					track:AdjustSpeed(getgenv().GilbertFootSpeed)
-				end
+	humanoid.WalkSpeed = MovementConfig.PatrolSpeed
+
+	if #currentWaypoints > 0 and currentWaypointIndex <= #currentWaypoints then
+		local targetWaypoint = currentWaypoints[currentWaypointIndex]
+		local wayPointPos = targetWaypoint.Position
+		local distance = (rootPart.Position - Vector3.new(wayPointPos.X, rootPart.Position.Y, wayPointPos.Z)).Magnitude
+
+		humanoid:MoveTo(wayPointPos)
+
+		local isLastWaypoint = (currentWaypointIndex == #currentWaypoints)
+		local threshold = isLastWaypoint and 6.0 or 4.0
+
+		if distance < threshold then 
+			currentWaypointIndex = currentWaypointIndex + 1
+			if currentWaypointIndex > #currentWaypoints then
+				findPatrolDestination()
 			end
 		end
 	else
-		isResting = true
-		restTimer = math.random(10, 30) / 10
-		return
+		findPatrolDestination()
 	end
+
+	statusLabel.Text = "Status: Pathfinding Patrol"
+	statusLabel.TextColor3 = Color3.fromRGB(90, 220, 110)
 end)
 
 humanoid.Died:Connect(function() 
