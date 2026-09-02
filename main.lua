@@ -684,12 +684,13 @@ local function addChangelogEntry(text, color)
 end
 
 -- Contenido del Changelog para la V10.5
-addChangelogEntry("[+] Smart Melee Bash: Ahora solo se ejecuta si hay enemigos cuerpo a cuerpo/infectados a ≤12 studs.", Color3.fromRGB(110, 220, 140))
-addChangelogEntry("[+] Distance Fix: Al recibir daño a distancia (disparos), prioriza maniobras de esquive en lugar de golpear al aire.", Color3.fromRGB(110, 220, 140))
-addChangelogEntry("[+] Realistic Animations: Actualizadas las animaciones de esquive por secuencias más fluidas y realistas.", Color3.fromRGB(110, 220, 140))
-addChangelogEntry("[+] Anti-Stuck & Pathing: Sistema de caché para 3s y re-calculado automático de nodos de patrullaje.", Color3.fromRGB(110, 220, 140))
-addChangelogEntry("[*] Combat Prediction: Lead targeting optimizado para enemigos con velocidad lineal incrementada o que realizan dodge.", Color3.fromRGB(245, 190, 90))
-addChangelogEntry("[*] UI Enhancements: Integrado panel visual de changelog en gethui.", Color3.fromRGB(245, 190, 90))
+-- Changelog content for V10.5 (In-game UI)
+addChangelogEntry("[+] Smart Melee Bash: Only triggers if infected/melee enemies are within ≤12 studs.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Distance Damage Fix: Prioritizes dodging over empty swings when taking ranged hits.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Realistic Animations: Replaced dodge animation IDs with smoother, realistic sequences.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Anti-Stuck & Pathing: 3s path caching system and dynamic patrol node recalculation.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[*] Combat Prediction: Optimized lead targeting for fast-moving or dodging targets.", Color3.fromRGB(245, 190, 90))
+addChangelogEntry("[*] UI Enhancements: Integrated scrollable Changelog panel into the gethui interface.", Color3.fromRGB(245, 190, 90))
 --------------------------------------------------------------------------------
 
 local isMinimized = false
