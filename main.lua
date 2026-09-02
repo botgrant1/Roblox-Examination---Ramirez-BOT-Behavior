@@ -30,7 +30,6 @@ local SelfDodgeConfig = {
 local canDodgeSelf = true
 local lastDodgeTime = 0
 
--- Animaciones actualizadas más realistas
 local DodgeAnimationIds = {
 	"rbxassetid://132266728249440",
 	"rbxassetid://107901103720798"
@@ -106,6 +105,7 @@ local rightLaserPart = nil
 local lastPositionCheck = Vector3.zero
 local stuckTimer = 0
 local pathLifeTimer = 0 
+local idleWatchdogTimer = 0
 
 local pathCache = {}
 
@@ -218,6 +218,7 @@ end
 
 local function generatePathTo(destination)
 	pathLifeTimer = 0 
+	idleWatchdogTimer = 0
 	
 	local cachedWps = getCachedWaypoints(rootPart.Position, destination)
 	if cachedWps then
@@ -242,6 +243,9 @@ local function generatePathTo(destination)
 		setCachedWaypoints(rootPart.Position, destination, currentWaypoints)
 		renderDebugWaypoints(currentWaypoints)
 	else
+		-- FALLBACK: Si falla el pathfinding, fuerza movimiento directo a un punto libre
+		local fallbackDirection = rootPart.CFrame.LookVector * 25
+		humanoid:MoveTo(rootPart.Position + fallbackDirection)
 		currentWaypoints = {}
 		currentWaypointIndex = 1
 	end
@@ -616,9 +620,6 @@ local plusCorner = Instance.new("UICorner")
 plusCorner.CornerRadius = UDim.new(0, 4)
 plusCorner.Parent = plusButton
 
---------------------------------------------------------------------------------
--- SECCIÓN DE CHANGELOG INTEGRADO EN LA PARTE INFERIOR
---------------------------------------------------------------------------------
 local changelogContainer = Instance.new("Frame")
 changelogContainer.Size = UDim2.new(1, 0, 0, 215)
 changelogContainer.Position = UDim2.new(0, 0, 0, 210)
@@ -655,7 +656,7 @@ changelogScroll.BackgroundTransparency = 1
 changelogScroll.BorderSizePixel = 0
 changelogScroll.ScrollBarThickness = 3
 changelogScroll.ScrollBarImageColor3 = Color3.fromRGB(70, 75, 90)
-changelogScroll.CanvasSize = UDim2.new(0, 0, 0, 0) -- Se ajusta dinámicamente por UIListLayout
+changelogScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 changelogScroll.ZIndex = 12
 changelogScroll.Parent = changelogContainer
 
@@ -683,15 +684,13 @@ local function addChangelogEntry(text, color)
 	entryLabel.Parent = changelogScroll
 end
 
--- Contenido del Changelog para la V10.5
--- Changelog content for V10.5 (In-game UI)
+-- Changelog en inglés para la UI
 addChangelogEntry("[+] Smart Melee Bash: Only triggers if infected/melee enemies are within ≤12 studs.", Color3.fromRGB(110, 220, 140))
 addChangelogEntry("[+] Distance Damage Fix: Prioritizes dodging over empty swings when taking ranged hits.", Color3.fromRGB(110, 220, 140))
 addChangelogEntry("[+] Realistic Animations: Replaced dodge animation IDs with smoother, realistic sequences.", Color3.fromRGB(110, 220, 140))
-addChangelogEntry("[+] Anti-Stuck & Pathing: 3s path caching system and dynamic patrol node recalculation.", Color3.fromRGB(110, 220, 140))
+addChangelogEntry("[+] Path Freeze Fix: Added fallback movement & idle watchdog to prevent getting stuck at path ends.", Color3.fromRGB(110, 220, 140))
 addChangelogEntry("[*] Combat Prediction: Optimized lead targeting for fast-moving or dodging targets.", Color3.fromRGB(245, 190, 90))
 addChangelogEntry("[*] UI Enhancements: Integrated scrollable Changelog panel into the gethui interface.", Color3.fromRGB(245, 190, 90))
---------------------------------------------------------------------------------
 
 local isMinimized = false
 minimizeButton.Activated:Connect(function()
@@ -896,6 +895,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 
 	pathLifeTimer = pathLifeTimer + deltaTime
 
+	-- DETECCIÓN DE ATASCAMIENTO POR FÍSICAS O COLISIONES
 	if (rootPart.Position - lastPositionCheck).Magnitude < 0.15 then
 		stuckTimer = stuckTimer + deltaTime
 		if stuckTimer > 0.6 then
@@ -964,7 +964,14 @@ RunService.Heartbeat:Connect(function(deltaTime)
 
 	humanoid.WalkSpeed = MovementConfig.PatrolSpeed
 
-	if #currentWaypoints > 0 and currentWaypointIndex <= #currentWaypoints then
+	-- WATCHDOG: Evita que se quede inmóvil si la lista de waypoints se vacía sin reasignar
+	if #currentWaypoints == 0 or currentWaypointIndex > #currentWaypoints then
+		idleWatchdogTimer = idleWatchdogTimer + deltaTime
+		if idleWatchdogTimer >= 0.2 then
+			findPatrolDestination()
+		end
+	else
+		idleWatchdogTimer = 0
 		local targetWaypoint = currentWaypoints[currentWaypointIndex]
 		local wayPointPos = targetWaypoint.Position
 		local distance = (rootPart.Position - Vector3.new(wayPointPos.X, rootPart.Position.Y, wayPointPos.Z)).Magnitude
@@ -972,7 +979,7 @@ RunService.Heartbeat:Connect(function(deltaTime)
 		humanoid:MoveTo(wayPointPos)
 
 		local isLastWaypoint = (currentWaypointIndex == #currentWaypoints)
-		local threshold = isLastWaypoint and 6.0 or 4.0
+		local threshold = isLastWaypoint and 5.0 or 3.5
 
 		if distance < threshold then 
 			currentWaypointIndex = currentWaypointIndex + 1
@@ -980,8 +987,6 @@ RunService.Heartbeat:Connect(function(deltaTime)
 				findPatrolDestination()
 			end
 		end
-	else
-		findPatrolDestination()
 	end
 
 	statusLabel.Text = "Status: Pathfinding Patrol"
