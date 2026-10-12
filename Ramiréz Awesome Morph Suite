@@ -1,0 +1,531 @@
+-- ============================================================================
+-- RAMIREZ AI • MORPH SUITE V5.1 (SLASHER HANDLE FIX)
+-- ============================================================================
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local HttpService = game:GetService("HttpService")
+
+local localPlayer = Players.LocalPlayer
+local character = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+local playerHead = character:WaitForChild("Head") or character:WaitForChild("Cabeza")
+
+local function getRandomString()
+    return "UI_" .. string.gsub(HttpService:GenerateGUID(false), "-", ""):sub(1, 10)
+end
+
+local targetGuiParent = localPlayer:FindFirstChildOfClass("PlayerGui") or game:GetService("CoreGui")
+
+local LimbAliases = {
+    ["Head"] = {"Head", "Cabeza"},
+    ["Torso"] = {"Torso", "UpperTorso", "LowerTorso"},
+    ["Left Arm"] = {"Left Arm", "LeftArm", "LeftUpperArm", "LeftHand", "Brazo izquierdo"},
+    ["Right Arm"] = {"Right Arm", "RightArm", "RightUpperArm", "RightHand", "Brazo derecho"},
+    ["Left Leg"] = {"Left Leg", "LeftLeg", "LeftUpperLeg", "LeftFoot", "Pierna izquierda"},
+    ["Right Leg"] = {"Right Leg", "RightLeg", "RightUpperLeg", "RightFoot", "Pierna derecha"},
+    ["HumanoidRootPart"] = {"HumanoidRootPart", "RootPart"}
+}
+
+local function getPlayerLimb(partName)
+    local lowerName = partName:lower()
+    for mainLimb, aliases in pairs(LimbAliases) do
+        for _, alias in ipairs(aliases) do
+            if lowerName == alias:lower() or lowerName:find(alias:lower()) then
+                local found = character:FindFirstChild(mainLimb) or character:FindFirstChild(alias)
+                if found then return found end
+            end
+        end
+    end
+    return character:FindFirstChild("Torso") or rootPart
+end
+
+local function findEntityModel(nameQuery)
+    local query = nameQuery:lower()
+    local charFolder = Workspace:FindFirstChild("Characters")
+    
+    if charFolder then
+        for _, child in ipairs(charFolder:GetChildren()) do
+            if child.Name:lower() == query or child.Name:lower():find("^" .. query) then
+                return child
+            end
+        end
+        for _, child in ipairs(charFolder:GetChildren()) do
+            if child.Name:lower():find(query) then
+                return child
+            end
+        end
+    end
+
+    for _, child in ipairs(Workspace:GetChildren()) do
+        if child:IsA("Model") and child ~= character and (child.Name:lower() == query or child.Name:lower():find(query)) then
+            return child
+        end
+    end
+
+    return nil
+end
+
+local WeaponNames = {
+    "ks-23-rif", "ak-74-rif", "ks-23-miniboss", "pkp", "buzzsaw", 
+    "saw", "shotgun", "pistol", "rifle", "blade", "sword", 
+    "knife", "baton", "riotshieldcollisionbody", "weapon", "gun"
+}
+
+local TacticalAllowKeywords = {
+    "backpack", "pack", "vest", "pouch", "bag", "rig", "harness", "radio", "belt"
+}
+
+local function isWeaponOrTool(item)
+    if item:IsA("Tool") or item:IsA("HopperBin") or item:IsA("Accoutrement") then
+        return true
+    end
+
+    local nameLower = item.Name:lower()
+
+    -- Exclusión de la hacha del Slasher (Handle con textura Dirty o dentro de un brazo)
+    if nameLower == "handle" then
+        if item:FindFirstChild("Dirty") then
+            return true
+        end
+        local parentName = item.Parent and item.Parent.Name:lower() or ""
+        if parentName:find("arm") or parentName:find("brazo") or parentName:find("hand") then
+            return true
+        end
+    end
+
+    -- Exclusiones de Shield, Machete y Chain
+    if nameLower == "shield" or nameLower == "machete" or nameLower == "chain" or nameLower == "cover" then
+        return true
+    end
+
+    for _, allowKw in ipairs(TacticalAllowKeywords) do
+        if nameLower:find(allowKw) then
+            return false
+        end
+    end
+
+    for _, kw in ipairs(WeaponNames) do
+        if nameLower == kw or nameLower:find(kw) then
+            return true
+        end
+    end
+
+    local parent = item.Parent
+    while parent and parent ~= Workspace do
+        if parent:IsA("Tool") then return true end
+        local parentName = parent.Name:lower()
+        if parentName == "shield" or parentName == "machete" or parentName == "chain" then
+            return true
+        end
+        for _, allowKw in ipairs(TacticalAllowKeywords) do
+            if parentName:find(allowKw) then return false end
+        end
+        for _, kw in ipairs(WeaponNames) do
+            if parentName == kw or parentName:find(kw) then return true end
+        end
+        parent = parent.Parent
+    end
+
+    return false
+end
+
+local function isHeadComponent(partName)
+    local lower = partName:lower()
+    return lower:find("head") or lower:find("cabeza") or lower:find("helmet") or lower:find("mask") or lower:find("hood") or lower:find("visor") or lower:find("hat") or lower:find("goggle")
+end
+
+local function isSkinCoverLayer(part)
+    local name = part.Name:lower()
+    if name == "torso" or name == "left arm" or name == "right arm" or name == "left leg" or name == "right leg" or name == "upper torso" or name == "lower torso" or name == "brazo derecho" or name == "brazo izquierdo" then
+        return true
+    end
+    if name:find("skin") or name:find("basebody") or name:find("cover") then
+        return true
+    end
+    return false
+end
+
+local function preparePlayerBodyAndClothing(targetModel)
+    pcall(function()
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("Accessory") or child:IsA("Hat") or child:IsA("GraphicTShirt") then
+                child:Destroy()
+            end
+        end
+
+        -- Remover cara automáticamente
+        local myHead = character:FindFirstChild("Head") or character:FindFirstChild("Cabeza")
+        if myHead then
+            myHead.Transparency = 1
+            for _, item in ipairs(myHead:GetChildren()) do
+                if item:IsA("Decal") or item.Name:lower() == "cara" or item.Name:lower() == "face" then
+                    item:Destroy()
+                end
+            end
+        end
+
+        local entShirt = targetModel:FindFirstChildOfClass("Shirt") or targetModel:FindFirstChild("Shirt", true)
+        local entPants = targetModel:FindFirstChildOfClass("Pants") or targetModel:FindFirstChild("Pants", true)
+
+        if entShirt then
+            local myShirt = character:FindFirstChildOfClass("Shirt") or Instance.new("Shirt", character)
+            myShirt.ShirtTemplate = entShirt.ShirtTemplate
+        end
+
+        if entPants then
+            local myPants = character:FindFirstChildOfClass("Pants") or Instance.new("Pants", character)
+            myPants.PantsTemplate = entPants.PantsTemplate
+        end
+
+        local bc = character:FindFirstChildOfClass("BodyColors") or Instance.new("BodyColors", character)
+        local blackColor = BrickColor.new("Really black")
+        bc.HeadColor = blackColor
+        bc.TorsoColor = blackColor
+        bc.LeftArmColor = blackColor
+        bc.RightArmColor = blackColor
+        bc.LeftLegColor = blackColor
+        bc.RightLegColor = blackColor
+    end)
+end
+
+-- ----------------------------------------------------------------------------
+-- APLICAR MORPH
+-- ----------------------------------------------------------------------------
+
+local function applyWorkspaceMorph(targetModelName)
+    local targetModel = findEntityModel(targetModelName)
+    if not targetModel then return false end
+
+    for _, old in ipairs(character:GetChildren()) do
+        if old.Name == "RamirezActiveMotorMorph" then
+            old:Destroy()
+        end
+    end
+
+    local morphModel = Instance.new("Model")
+    morphModel.Name = "RamirezActiveMotorMorph"
+    morphModel.Parent = character
+
+    local appliedCount = 0
+    local clonedPartsMap = {}
+
+    preparePlayerBodyAndClothing(targetModel)
+
+    local targetHead = targetModel:FindFirstChild("Head") or targetModel:FindFirstChild("Cabeza") or targetModel.PrimaryPart
+
+    for _, item in ipairs(targetModel:GetDescendants()) do
+        if item:IsA("BasePart") and item.Name ~= "HumanoidRootPart" then
+            if not isWeaponOrTool(item) and not isSkinCoverLayer(item) and item.Transparency < 0.9 then
+                pcall(function()
+                    local clonePart = item:Clone()
+
+                    for _, sub in ipairs(clonePart:GetDescendants()) do
+                        if sub:IsA("JointInstance") or sub:IsA("Weld") or sub:IsA("WeldConstraint") or sub:IsA("Motor6D") or sub:IsA("Script") then
+                            sub:Destroy()
+                        elseif sub:IsA("Light") or sub:IsA("BillboardGui") or sub:IsA("SurfaceGui") or sub:IsA("TextLabel") then
+                            sub:Destroy()
+                        end
+                    end
+
+                    clonePart.CanCollide = false
+                    clonePart.CanTouch = false
+                    clonePart.CanQuery = false
+                    clonePart.Massless = true
+                    clonePart.Anchored = false
+                    
+                    clonePart.Parent = morphModel
+                    clonedPartsMap[item] = clonePart
+
+                    appliedCount = appliedCount + 1
+                end)
+            end
+        elseif item:IsA("BillboardGui") then
+            local lname = item.Name:lower()
+            if lname:find("eye") or lname:find("glow") or lname:find("flare") then
+                pcall(function()
+                    local cloneEffect = item:Clone()
+                    local myHead = character:FindFirstChild("Head") or character:FindFirstChild("Cabeza")
+                    if myHead then cloneEffect.Parent = myHead end
+                end)
+            end
+        end
+    end
+
+    local myHead = character:FindFirstChild("Head") or character:FindFirstChild("Cabeza") or playerHead
+
+    for origItem, clonedPart in pairs(clonedPartsMap) do
+        pcall(function()
+            if isHeadComponent(origItem.Name) then
+                if targetHead then
+                    local offset = targetHead.CFrame:ToObjectSpace(origItem.CFrame)
+                    clonedPart.CFrame = myHead.CFrame * offset
+                else
+                    clonedPart.CFrame = myHead.CFrame
+                end
+
+                local headWeld = Instance.new("WeldConstraint")
+                headWeld.Name = getRandomString()
+                headWeld.Part0 = myHead
+                headWeld.Part1 = clonedPart
+                headWeld.Parent = clonedPart
+            end
+        end)
+    end
+
+    for _, origJoint in ipairs(targetModel:GetDescendants()) do
+        if origJoint:IsA("Motor6D") or origJoint:IsA("Weld") then
+            pcall(function()
+                local p0 = origJoint.Part0
+                local p1 = origJoint.Part1
+
+                if p0 and p1 then
+                    local clonedP1 = clonedPartsMap[p1]
+
+                    if clonedP1 and not isHeadComponent(p1.Name) then
+                        local newJoint = Instance.new("Motor6D")
+                        newJoint.Name = getRandomString()
+                        
+                        local playerPart0 = getPlayerLimb(p0.Name)
+                        if p0.Name == "HumanoidRootPart" then
+                            playerPart0 = rootPart
+                        end
+
+                        newJoint.Part0 = playerPart0
+                        newJoint.Part1 = clonedP1
+                        newJoint.C0 = origJoint.C0
+                        newJoint.C1 = origJoint.C1
+                        newJoint.Parent = clonedP1
+                    end
+                end
+            end)
+        end
+    end
+
+    for origItem, clonedPart in pairs(clonedPartsMap) do
+        if not isHeadComponent(origItem.Name) and not clonedPart:FindFirstChildOfClass("Motor6D") and not clonedPart:FindFirstChildOfClass("WeldConstraint") then
+            pcall(function()
+                local targetLimb = getPlayerLimb(origItem.Name)
+                local weld = Instance.new("WeldConstraint")
+                weld.Name = getRandomString()
+                weld.Part0 = targetLimb
+                weld.Part1 = clonedPart
+                weld.Parent = clonedPart
+            end)
+        end
+    end
+
+    return appliedCount > 0
+end
+
+-- ----------------------------------------------------------------------------
+-- UI INTERFACE
+-- ----------------------------------------------------------------------------
+
+local PresetMorphs = {
+    "Chimera", "SIN", "Mikhail", "CombatEngineer", "Dave", "Gilbert",
+    "RIF Miniboss", "Bomber", "Lurker", "Mutant",
+    "Slasher", "Shielder", "Riser", "RIF AK", "RIF KS", "ChemicalFury", "GrabbyMutant"
+}
+
+local morphGui = Instance.new("ScreenGui")
+morphGui.Name = getRandomString()
+morphGui.ResetOnSpawn = false
+morphGui.DisplayOrder = 1000
+morphGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+morphGui.Parent = targetGuiParent
+
+humanoid.Died:Connect(function()
+    pcall(function() morphGui:Destroy() end)
+end)
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = getRandomString()
+mainFrame.Size = UDim2.new(0, 230, 0, 310)
+mainFrame.Position = UDim2.new(0.04, 0, 0.05, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.ZIndex = 20
+mainFrame.Parent = morphGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 8)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(60, 50, 80)
+mainStroke.Thickness = 1
+mainStroke.Parent = mainFrame
+
+local headerFrame = Instance.new("Frame")
+headerFrame.Name = getRandomString()
+headerFrame.Size = UDim2.new(1, 0, 0, 32)
+headerFrame.BackgroundColor3 = Color3.fromRGB(22, 18, 30)
+headerFrame.BorderSizePixel = 0
+headerFrame.ZIndex = 21
+headerFrame.Parent = mainFrame
+
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 8)
+headerCorner.Parent = headerFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = getRandomString()
+titleLabel.Size = UDim2.new(1, -30, 1, 0)
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "MORPH SUITE • V5.1 POLISHED"
+titleLabel.TextColor3 = Color3.fromRGB(180, 130, 255)
+titleLabel.TextSize = 12
+titleLabel.Font = Enum.Font.Code
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.ZIndex = 22
+titleLabel.Parent = headerFrame
+
+local minimizeButton = Instance.new("TextButton")
+minimizeButton.Name = getRandomString()
+minimizeButton.Size = UDim2.new(0, 24, 0, 24)
+minimizeButton.Position = UDim2.new(1, -28, 0, 4)
+minimizeButton.BackgroundTransparency = 1
+minimizeButton.Text = "−"
+minimizeButton.TextColor3 = Color3.fromRGB(180, 180, 180)
+minimizeButton.TextSize = 16
+minimizeButton.Font = Enum.Font.SourceSansBold
+minimizeButton.ZIndex = 22
+minimizeButton.Parent = headerFrame
+
+local contentFrame = Instance.new("Frame")
+contentFrame.Name = getRandomString()
+contentFrame.Size = UDim2.new(1, -16, 1, -40)
+contentFrame.Position = UDim2.new(0, 8, 0, 36)
+contentFrame.BackgroundTransparency = 1
+contentFrame.ZIndex = 21
+contentFrame.Parent = mainFrame
+
+local scrollList = Instance.new("ScrollingFrame")
+scrollList.Name = getRandomString()
+scrollList.Size = UDim2.new(1, 0, 0, 140)
+scrollList.Position = UDim2.new(0, 0, 0, 0)
+scrollList.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+scrollList.BorderSizePixel = 0
+scrollList.ScrollBarThickness = 4
+scrollList.ScrollBarImageColor3 = Color3.fromRGB(120, 90, 180)
+scrollList.ZIndex = 22
+scrollList.Parent = contentFrame
+
+local scrollCorner = Instance.new("UICorner")
+scrollCorner.CornerRadius = UDim.new(0, 5)
+scrollCorner.Parent = scrollList
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 3)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = scrollList
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Name = getRandomString()
+statusLabel.Size = UDim2.new(1, 0, 0, 20)
+statusLabel.Position = UDim2.new(0, 0, 0, 235)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Status: Select a Character"
+statusLabel.TextColor3 = Color3.fromRGB(140, 145, 155)
+statusLabel.TextSize = 10
+statusLabel.Font = Enum.Font.Code
+statusLabel.ZIndex = 22
+statusLabel.Parent = contentFrame
+
+local function createPresetButton(entityName)
+    local btn = Instance.new("TextButton")
+    btn.Name = getRandomString()
+    btn.Size = UDim2.new(1, -8, 0, 25)
+    btn.BackgroundColor3 = Color3.fromRGB(30, 25, 40)
+    btn.Text = "  " .. entityName
+    btn.TextColor3 = Color3.fromRGB(210, 210, 220)
+    btn.TextSize = 11
+    btn.Font = Enum.Font.SourceSans
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.ZIndex = 23
+    btn.Parent = scrollList
+
+    local btnCorner = Instance.new("UICorner")
+    btnCorner.CornerRadius = UDim.new(0, 4)
+    btnCorner.Parent = btn
+
+    btn.Activated:Connect(function()
+        statusLabel.Text = "Status: Applying " .. entityName .. "..."
+        local ok = applyWorkspaceMorph(entityName)
+        if ok then
+            statusLabel.Text = "Status: " .. entityName .. " Active!"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 220, 140)
+        else
+            statusLabel.Text = "Status: " .. entityName .. " Not Found"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+        end
+    end)
+end
+
+for _, morphName in ipairs(PresetMorphs) do
+    createPresetButton(morphName)
+end
+
+scrollList.CanvasSize = UDim2.new(0, 0, 0, #PresetMorphs * 28)
+
+local customInput = Instance.new("TextBox")
+customInput.Name = getRandomString()
+customInput.Size = UDim2.new(1, 0, 0, 28)
+customInput.Position = UDim2.new(0, 0, 0, 150)
+customInput.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+customInput.Text = ""
+customInput.PlaceholderText = "Or type exact name..."
+customInput.TextColor3 = Color3.fromRGB(220, 220, 220)
+customInput.PlaceholderColor3 = Color3.fromRGB(100, 100, 110)
+customInput.TextSize = 11
+customInput.Font = Enum.Font.Code
+customInput.ZIndex = 22
+customInput.Parent = contentFrame
+
+local inputCorner = Instance.new("UICorner")
+inputCorner.CornerRadius = UDim.new(0, 5)
+inputCorner.Parent = customInput
+
+local applyCustomButton = Instance.new("TextButton")
+applyCustomButton.Name = getRandomString()
+applyCustomButton.Size = UDim2.new(1, 0, 0, 28)
+applyCustomButton.Position = UDim2.new(0, 0, 0, 184)
+applyCustomButton.BackgroundColor3 = Color3.fromRGB(28, 32, 42)
+applyCustomButton.Text = "APPLY CUSTOM MORPH"
+applyCustomButton.TextColor3 = Color3.fromRGB(120, 180, 255)
+applyCustomButton.TextSize = 11
+applyCustomButton.Font = Enum.Font.SourceSansBold
+applyCustomButton.ZIndex = 22
+applyCustomButton.Parent = contentFrame
+
+local applyCorner = Instance.new("UICorner")
+applyCorner.CornerRadius = UDim.new(0, 5)
+applyCorner.Parent = applyCustomButton
+
+local isMinimized = false
+minimizeButton.Activated:Connect(function()
+    isMinimized = not isMinimized
+    mainFrame.Size = isMinimized and UDim2.new(0, 230, 0, 32) or UDim2.new(0, 230, 0, 310)
+    minimizeButton.Text = isMinimized and "+" or "−"
+    contentFrame.Visible = not isMinimized
+end)
+
+applyCustomButton.Activated:Connect(function()
+    local entityName = customInput.Text
+    if entityName and entityName ~= "" then
+        statusLabel.Text = "Status: Applying " .. entityName .. "..."
+        local ok = applyWorkspaceMorph(entityName)
+        if ok then
+            statusLabel.Text = "Status: " .. entityName .. " Active!"
+            statusLabel.TextColor3 = Color3.fromRGB(100, 220, 140)
+        else
+            statusLabel.Text = "Status: Entity Not Found"
+            statusLabel.TextColor3 = Color3.fromRGB(255, 90, 90)
+        end
+    end
+end)
